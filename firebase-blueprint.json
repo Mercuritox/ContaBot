@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and settings",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "avatar": { "type": "string" },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "theme": { "type": "string", "enum": ["light", "dark"] }
+          }
+        },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["username"]
+    },
+    "Event": {
+      "title": "Event",
+      "description": "Financial transaction or movement",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "type": { "type": "string", "enum": ["income", "expense", "transfer"] },
+        "amount": { "type": "number" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "account_name": { "type": "string" },
+        "target_account": { "type": "string" },
+        "is_interest": { "type": "boolean" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id", "type", "amount", "date"]
+    },
+    "Goal": {
+      "title": "Goal",
+      "description": "Financial goal",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "name": { "type": "string" },
+        "target_amount": { "type": "number" },
+        "current_amount": { "type": "number" },
+        "emoji": { "type": "string" },
+        "color": { "type": "string" },
+        "deadline": { "type": "string" },
+        "account_name": { "type": "string" },
+        "completed_at": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id", "name", "target_amount"]
+    },
+    "Subscription": {
+      "title": "Subscription",
+      "description": "Premium subscription status",
+      "type": "object",
+      "properties": {
+        "isPremium": { "type": "boolean" },
+        "stripeCustomerId": { "type": "string" },
+        "subscriptionId": { "type": "string" },
+        "premiumUntil": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Individual user documents"
+    },
+    "/events/{eventId}": {
+      "schema": "Event",
+      "description": "Financial events"
+    },
+    "/goals/{goalId}": {
+      "schema": "Goal",
+      "description": "Financial goals"
+    },
+    "/subscriptions/{userId}": {
+      "schema": "Subscription",
+      "description": "Subscription status per user"
+    }
+  }
+}

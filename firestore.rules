@@ -1,0 +1,90 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields: username, email, phone, avatar, settings, created_at
+    //
+    // Collection: events
+    // Fields: user_id, type, amount, category, description, date, account_name, target_account, is_interest, created_at
+    //
+    // Collection: goals
+    // Fields: user_id, name, target_amount, current_amount, emoji, color, deadline, account_name, completed_at, created_at
+    //
+    // Collection: subscriptions
+    // Fields: isPremium, stripeCustomerId, subscriptionId, premiumUntil, updatedAt
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.user_id;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "erickortizmy@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    // Validation Helpers
+    function isValidUser(data) {
+      return data.keys().hasAll(['username']) &&
+             data.username is string && data.username.size() > 0 && data.username.size() < 100;
+    }
+
+    function isValidEvent(data) {
+      return data.keys().hasAll(['user_id', 'type', 'amount', 'date']) &&
+             data.user_id == request.auth.uid &&
+             data.type in ['income', 'expense', 'transfer'] &&
+             data.amount is number &&
+             data.date is string;
+    }
+
+    function isValidGoal(data) {
+      return data.keys().hasAll(['user_id', 'name', 'target_amount']) &&
+             data.user_id == request.auth.uid &&
+             data.name is string && data.name.size() > 0 &&
+             data.target_amount is number;
+    }
+
+    // Rules
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && 
+                    (request.resource.data.role == resource.data.role || isAdmin());
+    }
+
+    match /events/{eventId} {
+      allow read: if isAuthenticated() && (resource.data.user_id == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidEvent(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.user_id == request.auth.uid && isValidEvent(request.resource.data);
+      allow delete: if isAuthenticated() && (resource.data.user_id == request.auth.uid || isAdmin());
+    }
+
+    match /goals/{goalId} {
+      allow read: if isAuthenticated() && (resource.data.user_id == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidGoal(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.user_id == request.auth.uid && isValidGoal(request.resource.data);
+      allow delete: if isAuthenticated() && (resource.data.user_id == request.auth.uid || isAdmin());
+    }
+
+    match /subscriptions/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      // Only admin (server) should write to subscriptions
+      allow write: if isAdmin();
+    }
+  }
+}

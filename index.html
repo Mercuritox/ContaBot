@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { 
+        margin: 0; 
+        padding: 0;
+        /* Color del splash hasta que React tome el control */
+        background-color: #0d5c45;
+      }
+    </style>
+    <script>
+      // Se ejecuta antes de React — aplica el color del HEADER (no del fondo)
+      // para que el status bar con black-translucent muestre el mismo color
+      const theme = localStorage.getItem('theme') || 'dark';
+      if (theme === 'dark') {
+        document.documentElement.classList.add('dark');
+      }
+      // bg-white = #ffffff en claro, bg-gray-900 = #111827 en oscuro
+      const headerColor = theme === 'dark' ? '#111827' : '#ffffff';
+      document.documentElement.style.setProperty('background-color', headerColor, 'important');
+      document.body && document.body.style.setProperty('background-color', headerColor, 'important');
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>ContaBot - Asistente Financiero</title>
+    <link rel="icon" type="image/svg+xml" href="/icon.svg?v=2" />
+    <link rel="apple-touch-icon" href="/icon.svg?v=2" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/icon.svg?v=2" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/icon.svg?v=2" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon.svg?v=2" />
+    <link rel="mask-icon" href="/icon.svg?v=2" color="#009966" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="ContaBot" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

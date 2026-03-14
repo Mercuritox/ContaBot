@@ -1,0 +1,8 @@
+{
+  "name": "ContaBot",
+  "description": "Tu asistente contable inteligente con análisis visual y gestión multimodal.",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ]
+}
