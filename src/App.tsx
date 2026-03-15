@@ -281,6 +281,7 @@ service cloud.firestore {
     }
   }
 }`;
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isVoiceProcessing, setIsVoiceProcessing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -376,6 +377,28 @@ service cloud.firestore {
   const proposalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (!window.speechSynthesis) return;
+    
+    // Pre-cargar voces inmediatamente
+    window.speechSynthesis.getVoices();
+    
+    // Re-intentar cuando cambien (necesario en iOS y Chrome)
+    window.speechSynthesis.onvoiceschanged = () => {
+      const voices = window.speechSynthesis.getVoices();
+      const best = voices.find(v => v.name === 'Paulina') ||
+                   voices.find(v => v.name.includes('Google') && v.lang.startsWith('es'));
+      if (best) console.log(`✅ Mejor voz disponible: ${best.name}`);
+    };
+
+    return () => {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.onvoiceschanged = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (proposal && proposalRef.current) {
       // Small delay to ensure the element is rendered and layout is updated
       setTimeout(() => {
@@ -466,6 +489,8 @@ service cloud.firestore {
   const profileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const lastInputWasVoiceRef = useRef(false);
 
 
 
@@ -1569,9 +1594,224 @@ service cloud.firestore {
     }
   };
 
+  const stopSpeaking = () => {
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+    }
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    setIsSpeaking(false);
+  };
+
+  const getBestSpanishVoice = (): SpeechSynthesisVoice | null => {
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length === 0) return null;
+
+    // Orden de preferencia por calidad y naturalidad
+    return (
+      // iOS — Paulina es la mejor voz en español
+      voices.find(v => v.name === 'Paulina') ||
+      voices.find(v => v.name === 'Monica') ||
+      // Android / Chrome — voces Google son naturales  
+      voices.find(v => v.name.includes('Google') && v.lang === 'es-US') ||
+      voices.find(v => v.name.includes('Google') && v.lang === 'es-MX') ||
+      voices.find(v => v.name.includes('Google') && v.lang.startsWith('es')) ||
+      // Windows — Microsoft voces online son aceptables
+      voices.find(v => v.name.includes('Microsoft') && v.lang === 'es-MX' && !v.localService) ||
+      voices.find(v => v.name.includes('Microsoft') && v.lang.startsWith('es') && !v.localService) ||
+      // Cualquier voz online en español (no local = mejor calidad)
+      voices.find(v => v.lang === 'es-MX' && !v.localService) ||
+      voices.find(v => v.lang === 'es-US' && !v.localService) ||
+      voices.find(v => v.lang.startsWith('es') && !v.localService) ||
+      // Fallback a cualquier voz en español
+      voices.find(v => v.lang === 'es-MX') ||
+      voices.find(v => v.lang === 'es-US') ||
+      voices.find(v => v.lang.startsWith('es')) ||
+      null
+    );
+  };
+
+  const speakText = (text: string) => {
+    stopSpeaking();
+    if (!text.trim() || !window.speechSynthesis) return;
+
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const isAndroid = /Android/i.test(navigator.userAgent);
+
+    // Dividir en chunks cortos (máx 80 chars) para evitar corte en iOS
+    const splitIntoChunks = (str: string): string[] => {
+      // Dividir por puntuación y comas
+      const raw = str.split(/(?<=[.!?,;])\s+/).map(s => s.trim()).filter(Boolean);
+      const result: string[] = [];
+      
+      for (const segment of raw) {
+        if (segment.length <= 80) {
+          result.push(segment);
+        } else {
+          // Si aún es largo, cortar por palabras
+          const words = segment.split(' ');
+          let current = '';
+          for (const word of words) {
+            if ((current + ' ' + word).trim().length > 80) {
+              if (current) result.push(current.trim());
+              current = word;
+            } else {
+              current = (current + ' ' + word).trim();
+            }
+          }
+          if (current) result.push(current.trim());
+        }
+      }
+      return result.length > 0 ? result : [str];
+    };
+
+    const doSpeak = () => {
+      const chunks = splitIntoChunks(text);
+      let currentIndex = 0;
+      let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
+
+      // iOS necesita este keepalive para no cortar el audio
+      if (isIOS) {
+        keepAliveInterval = setInterval(() => {
+          if (window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+          }
+        }, 500);
+      }
+
+      const cleanup = () => {
+        if (keepAliveInterval) {
+          clearInterval(keepAliveInterval);
+          keepAliveInterval = null;
+        }
+        setIsSpeaking(false);
+      };
+
+      const speakChunk = (index: number) => {
+        if (index >= chunks.length) {
+          cleanup();
+          return;
+        }
+
+        const utterance = new SpeechSynthesisUtterance(chunks[index]);
+        utterance.lang = 'es-MX';
+        utterance.volume = 1.0;
+        utterance.rate = isIOS ? 0.95 : isAndroid ? 1.0 : 1.0;
+        utterance.pitch = isIOS ? 1.15 : 1.0;
+
+        const voice = getBestSpanishVoice();
+        if (voice) utterance.voice = voice;
+
+        if (index === 0) setIsSpeaking(true);
+
+        utterance.onend = () => {
+          currentIndex++;
+          // Pequeño delay entre chunks para iOS
+          setTimeout(() => speakChunk(currentIndex), isIOS ? 50 : 0);
+        };
+
+        utterance.onerror = (e) => {
+          if (e.error !== 'interrupted') {
+            console.warn('Speech error:', e.error);
+            cleanup();
+          }
+        };
+
+        window.speechSynthesis.speak(utterance);
+      };
+
+      setTimeout(() => speakChunk(0), isIOS ? 150 : 0);
+    };
+
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length === 0) {
+      window.speechSynthesis.onvoiceschanged = () => {
+        window.speechSynthesis.onvoiceschanged = null;
+        doSpeak();
+      };
+      setTimeout(doSpeak, 300);
+    } else {
+      doSpeak();
+    }
+  };
+
+  // Esta función ya no se necesita como separada, pero mantener referencia por si acaso
+  const speakTextFallback = speakText;
+
+  const buildSpeechFromProposal = (proposal: GeminiResponse): string => {
+    const cleanText = (str: string) => str
+      .replace(/[\u{1F000}-\u{1FAFF}]/gu, '')
+      .replace(/[\u{2600}-\u{27FF}]/gu, '')
+      .replace(/[✅❌⚠️💰📊🎉🙏👍🔔💳🏦🎯📈💡🌟⭐😊🤖]/g, '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/\bMXN\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const formatMoney = (amount: number) =>
+      `${new Intl.NumberFormat('es-MX', { maximumFractionDigits: 2 }).format(amount)} pesos`;
+
+    const parts: string[] = [];
+
+    if (proposal.operation === 'query') {
+      // Para consultas, solo leer el mensaje limpio y corto
+      const msg = cleanText(proposal.result.user_feedback_message || '');
+      // Máximo 150 chars para no aburrir
+      return msg.length > 150 ? msg.substring(0, 147) + '.' : msg;
+    }
+
+    if (proposal.operation === 'create' && proposal.result.create?.event) {
+      const event = proposal.result.create.event;
+      const kindMap: Record<string, string> = {
+        expense: 'gasto',
+        income: 'ingreso',
+        debt_increase: 'cargo a tarjeta',
+        debt_payment: 'pago de deuda',
+        loan_given: 'préstamo',
+        loan_repayment_received: 'cobro',
+        refund: 'devolución',
+        loss: 'pérdida'
+      };
+
+      const kindText = kindMap[event.kind || ''] || 'movimiento';
+      const amount = event.amount != null ? formatMoney(event.amount) : null;
+      const description = cleanText(event.description || event.merchant?.name || '');
+      const account = cleanText(event.accounts?.primary_account_ref?.name || '');
+
+      // Mensaje corto y directo
+      let msg = amount ? `${kindText} de ${amount}` : kindText;
+      if (description) msg += `, ${description}`;
+      if (account) msg += `, en ${account}`;
+      parts.push(msg + '.');
+    }
+
+    if (proposal.operation === 'create_goal' && proposal.result.create_goal?.goal) {
+      const goal = proposal.result.create_goal.goal;
+      parts.push(`Meta: ${goal.name}, objetivo ${formatMoney(goal.target_amount || 0)}.`);
+    }
+
+    // Pregunta de confirmación corta
+    if (proposal.status === 'ready_to_confirm') {
+      parts.push('¿Lo registramos?');
+    } else if (proposal.status === 'needs_clarification') {
+      const questions = proposal.follow_up_questions?.[0];
+      if (questions) {
+        parts.push(cleanText(questions));
+      } else {
+        parts.push('¿Me das más detalles?');
+      }
+    }
+
+    return parts.join(' ');
+  };
+
   const handleTextInput = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim()) return;
+    lastInputWasVoiceRef.current = false;
     await processInput({ text: inputText });
     setInputText('');
   };
@@ -1760,6 +2000,13 @@ service cloud.firestore {
         }
 
         setProposal(result);
+        
+        // Solo hablar si el input fue por voz
+        if (result && lastInputWasVoiceRef.current) {
+          const speechText = buildSpeechFromProposal(result);
+          speakText(speechText);
+        }
+        lastInputWasVoiceRef.current = false;
       } else {
         setError("No pude procesar la solicitud. El servidor de IA devolvió una respuesta vacía.");
       }
@@ -1780,6 +2027,16 @@ service cloud.firestore {
   };
 
   const startRecording = async () => {
+    // Desbloquear Web Speech API en iOS Safari (requiere gesto del usuario)
+    if (window.speechSynthesis) {
+      const unlock = new SpeechSynthesisUtterance('');
+      unlock.volume = 0;
+      window.speechSynthesis.speak(unlock);
+      window.speechSynthesis.cancel();
+    }
+
+    stopSpeaking(); // Detener voz si ContaBot estaba hablando
+    lastInputWasVoiceRef.current = true;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
@@ -2126,6 +2383,7 @@ service cloud.firestore {
           
           setProposal(nextProposal);
           setSuccess("Movimiento guardado. Verificando el siguiente...");
+          speakText('Movimiento guardado. Verificando el siguiente.');
           setTimeout(() => setSuccess(null), 3000);
           setIsProcessing(false);
           return;
@@ -2157,9 +2415,11 @@ service cloud.firestore {
           ? eventDate.toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
           : eventDate.toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' });
         setSuccess(`¡Movimientos registrados! Nota: Son del ${dateStr}, por lo que no aparecerán en tu vista actual.`);
+        speakText('¡Listo! El movimiento fue registrado con éxito.');
         setTimeout(() => setSuccess(null), 8000);
       } else {
         setSuccess("Movimientos registrados con éxito.");
+        speakText('¡Listo! El movimiento fue registrado con éxito.');
         setTimeout(() => setSuccess(null), 4000);
       }
       
@@ -3080,7 +3340,7 @@ service cloud.firestore {
                  <Check size={18} />} 
                 {proposal?.operation === 'query' ? 'Consulta' : proposal?.operation === 'create_goal' ? 'Nueva Meta' : 'Propuesta de Movimiento'} {remainingPendingCount > 0 ? `(Pendientes: ${remainingPendingCount + 1})` : ''}
               </h3>
-              <button onClick={() => setProposal(null)} className={cn(
+              <button onClick={() => { setProposal(null); speakText('Entendido, propuesta descartada.'); }} className={cn(
                 "p-1 rounded-full transition-colors",
                 ['debt_increase', 'debt_payment'].includes(proposal?.result?.create?.event?.kind || '')
                   ? "text-amber-600 hover:bg-amber-100 dark:hover:bg-amber-800"
@@ -3241,7 +3501,10 @@ service cloud.firestore {
                   {proposal?.operation === 'query' ? 'Entendido' : (remainingPendingCount > 0 ? 'Confirmar y Siguiente' : 'Confirmar')}
                 </button>
                 <button 
-                  onClick={() => setProposal(null)}
+                  onClick={() => {
+                    setProposal(null);
+                    speakText('Entendido, propuesta descartada.');
+                  }}
                   disabled={isProcessing}
                   className="px-6 py-3 rounded-xl font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all disabled:opacity-50"
                 >
@@ -5168,7 +5431,41 @@ service cloud.firestore {
               
               <div className="flex items-center min-h-[44px]">
                 <AnimatePresence mode="wait">
-                  {!inputText.trim() && !isRecording && !isVoiceProcessing ? (
+                  {isSpeaking ? (
+                    <motion.div
+                      key="speaking"
+                      initial={{ opacity: 0, scale: 0.5 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.5 }}
+                      className="flex items-center gap-1"
+                    >
+                      {/* Animación de ondas de voz */}
+                      <div className="flex items-end gap-0.5 h-6">
+                        {[0, 1, 2, 3].map((i) => (
+                          <motion.div
+                            key={i}
+                            className="w-1 bg-emerald-500 rounded-full"
+                            animate={{ height: ['4px', '20px', '4px'] }}
+                            transition={{
+                              duration: 0.6,
+                              repeat: Infinity,
+                              delay: i * 0.15,
+                              ease: 'easeInOut'
+                            }}
+                          />
+                        ))}
+                      </div>
+                      {/* Botón para silenciar */}
+                      <button
+                        type="button"
+                        onClick={stopSpeaking}
+                        className="p-2 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-xl transition-all"
+                        title="Silenciar"
+                      >
+                        <X size={18} />
+                      </button>
+                    </motion.div>
+                  ) : !inputText.trim() && !isRecording && !isVoiceProcessing ? (
                     <motion.div 
                       key="media-actions"
                       initial={{ opacity: 0, scale: 0.8, x: 10 }}

@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type, GenerateContentResponse, ThinkingLevel } from "@google/genai";
+import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 
 const SYSTEM_INSTRUCTION = `Eres "ContaBot", un asistente personal de contabilidad personal con identidad propia. Tu objetivo es ayudar al usuario a llevar el control de sus finanzas de manera amigable y eficiente.
 A partir de UN input del usuario (puede incluir texto, audio o foto de ticket), tu trabajo es interpretar la intención y devolver ÚNICAMENTE un JSON válido que represente una propuesta para: crear un movimiento, modificar un movimiento existente, o hacer una consulta.
@@ -284,8 +284,8 @@ export async function processMultimodalInput(
     (window as any)._SERVER_GEMINI_API_KEY ||
     (window as any).GEMINI_API_KEY ||
     (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) || 
-    (typeof process !== 'undefined' && process.env?.API_KEY) ||
-    (import.meta.env?.VITE_GEMINI_API_KEY);
+    (import.meta.env?.VITE_GEMINI_API_KEY) ||
+    (typeof process !== 'undefined' && process.env?.API_KEY);
 
   // Clean the key (remove quotes if they were accidentally included)
   if (typeof apiKey === 'string') {
@@ -300,8 +300,6 @@ export async function processMultimodalInput(
   // Log key presence (first 3 chars for debugging)
   console.log(`Gemini API Key detected. Starts with: ${apiKey.substring(0, 3)}... Length: ${apiKey.length}`);
 
-  const ai = new GoogleGenAI({ apiKey });
-  
   const parts: any[] = [];
   
   if (input.text) {
@@ -352,13 +350,15 @@ Input: Process this input according to the system instructions.
 
   try {
     const response: GenerateContentResponse = await withRetry(async () => {
-      return await ai.models.generateContent({
+      // Create a fresh instance for each call to ensure we use the latest key
+      const genAI = new GoogleGenAI({ apiKey: apiKey });
+      
+      return await genAI.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: [{ parts }],
+        contents: { parts },
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
-          responseMimeType: "application/json",
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
+          responseMimeType: "application/json"
         },
       });
     });

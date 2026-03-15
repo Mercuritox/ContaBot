@@ -10,6 +10,7 @@ import crypto from "crypto";
 import dotenv from "dotenv";
 import cron from "node-cron";
 import admin from "firebase-admin";
+import { GoogleGenAI } from '@google/genai';
 
 dotenv.config();
 
