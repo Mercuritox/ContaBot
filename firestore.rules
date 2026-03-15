@@ -65,6 +65,10 @@ service cloud.firestore {
       allow create: if isOwner(userId) && isValidUser(request.resource.data);
       allow update: if isOwner(userId) && isValidUser(request.resource.data) && 
                     (request.resource.data.role == resource.data.role || isAdmin());
+
+      match /aiChats/{month} {
+        allow read, write: if isOwner(userId);
+      }
     }
 
     match /events/{eventId} {

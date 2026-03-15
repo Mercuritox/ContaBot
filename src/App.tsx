@@ -48,10 +48,13 @@ import {
   Target,
   Trophy,
   Sparkles,
-  Clock
+  Clock,
+  RefreshCw,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
+import { GoogleGenAI } from '@google/genai';
 import { 
   PieChart, 
   Pie, 
@@ -293,10 +296,19 @@ service cloud.firestore {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isPremium, setIsPremium] = useState<boolean | null>(null);
+  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+  const [aiChatMessages, setAiChatMessages] = useState<Array<{role: 'user' | 'ai', text: string}>>([]);
+  const [aiChatInput, setAiChatInput] = useState('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisGenerated, setAnalysisGenerated] = useState(false);
+  const [photoUsage, setPhotoUsage] = useState(0);
+  const [audioUsage, setAudioUsage] = useState(0);
   const [isCheckingSubscription, setIsCheckingSubscription] = useState(false);
   const [premiumUntil, setPremiumUntil] = useState<string | null>(null);
   const [showAd, setShowAd] = useState(false);
-
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'excel' | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const [canCloseAd, setCanCloseAd] = useState(false);
   const [isNavVisible, setIsNavVisible] = useState(true);
@@ -679,6 +691,50 @@ service cloud.firestore {
     checkApiKey();
   }, []);
 
+  const loadUsageCounters = async (uid: string) => {
+    try {
+      const userRef = doc(db, 'users', uid);
+      const userSnap = await getDoc(userRef);
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      
+      if (userSnap.exists()) {
+        const data = userSnap.data();
+        const usage = data.usage || { photos: 0, audio: 0, month: currentMonth };
+        
+        if (usage.month !== currentMonth) {
+          const newUsage = { photos: 0, audio: 0, month: currentMonth };
+          await updateDoc(userRef, { usage: newUsage });
+          setPhotoUsage(0);
+          setAudioUsage(0);
+        } else {
+          setPhotoUsage(usage.photos || 0);
+          setAudioUsage(usage.audio || 0);
+        }
+      }
+    } catch (err) {
+      console.error("Error loading usage counters:", err);
+    }
+  };
+
+  const incrementUsage = async (type: "photo" | "audio") => {
+    if (!user?.uid) return;
+    try {
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      const newPhotoUsage = type === "photo" ? photoUsage + 1 : photoUsage;
+      const newAudioUsage = type === "audio" ? audioUsage + 1 : audioUsage;
+      
+      if (type === "photo") setPhotoUsage(newPhotoUsage);
+      if (type === "audio") setAudioUsage(newAudioUsage);
+      
+      const userRef = doc(db, 'users', user.uid);
+      await updateDoc(userRef, { 
+        usage: { photos: newPhotoUsage, audio: newAudioUsage, month: currentMonth } 
+      });
+    } catch (err) {
+      console.error(`Error incrementing ${type} usage:`, err);
+    }
+  };
+
   useEffect(() => {
     const checkSubscription = async () => {
       if (!user?.uid) return;
@@ -723,8 +779,13 @@ service cloud.firestore {
     };
 
     if (user?.id) {
+      if (user?.uid) {
+        const month = getActiveChatMonth();
+        loadAiChat(user.uid, month);
+      }
       fetchData();
       checkSubscription();
+      if (user?.uid) loadUsageCounters(user.uid);
     }
 
     // Verificar si venimos de un pago exitoso
@@ -775,6 +836,600 @@ service cloud.firestore {
       setView('auth');
     }
   }, [isLoading, user, view]);
+
+  const getActiveChatMonth = () => {
+    if (filterType === 'month') return filterDate;
+    if (filterType === 'day') return filterDate.slice(0, 7);
+    if (filterType === 'year') return filterDate + "-01";
+    return new Date().toISOString().slice(0, 7);
+  };
+
+  const getExportPeriodLabel = () => {
+    const mesesNombres = ['enero','febrero','marzo','abril','mayo','junio',
+      'julio','agosto','septiembre','octubre','noviembre','diciembre'];
+    
+    if (filterType === 'day') {
+      const parts = filterDate.split('-');
+      const year = parts[0];
+      const month = parseInt(parts[1]) - 1;
+      const day = parseInt(parts[2]);
+      return `el día ${day} de ${mesesNombres[month]} de ${year}`;
+    }
+    if (filterType === 'month') {
+      const parts = filterDate.split('-');
+      const year = parts[0];
+      const month = parseInt(parts[1]) - 1;
+      return `el mes de ${mesesNombres[month]} ${year}`;
+    }
+    if (filterType === 'year') {
+      return `todo el año ${filterDate}`;
+    }
+    return "todos tus movimientos registrados";
+  };
+
+  const generatePDF = async () => {
+    const cleanTextForPDF = (text: string): string => {
+      return text
+        .replace(/#{1,6}\s+/g, '')
+        .replace(/\*\*(.*?)\*\*/g, '$1')
+        .replace(/\*(.*?)\*/g, '$1')
+        .replace(/_{1,2}(.*?)_{1,2}/g, '$1')
+        .replace(/`{1,3}(.*?)`{1,3}/g, '$1')
+        .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+        .replace(/^[-*+]\s+/gm, '• ')
+        .replace(/^\d+\.\s+/gm, '')
+        .replace(/[\u{1F000}-\u{1FAFF}]/gu, '')
+        .replace(/[\u{2600}-\u{27FF}]/gu, '')
+        .replace(/[\u{1F300}-\u{1F9FF}]/gu, '')
+        .replace(/[\u{FE00}-\u{FE0F}]/gu, '')
+        .replace(/[\u{1F1E0}-\u{1F1FF}]/gu, '')
+        .replace(/[^\x00-\xFF]/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+
+    const jsPDF = (await import('jspdf')).default;
+    const autoTable = (await import('jspdf-autotable')).default;
+    const html2canvas = (await import('html2canvas')).default;
+
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    let yPosition = 20;
+
+    // Header
+    pdf.setFillColor(0, 153, 102); // Emerald 600
+    pdf.rect(0, 0, 210, 40, 'F');
+    
+    const logoImg = new Image();
+    logoImg.src = APP_LOGO;
+    await new Promise((resolve) => { logoImg.onload = resolve; });
+    const logoCanvas = document.createElement('canvas');
+    logoCanvas.width = 80;
+    logoCanvas.height = 80;
+    const ctx = logoCanvas.getContext('2d');
+    ctx?.drawImage(logoImg, 0, 0, 80, 80);
+    const logoPng = logoCanvas.toDataURL('image/png');
+    pdf.addImage(logoPng, 'PNG', 15, 10, 20, 20);
+    
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(20);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(cleanTextForPDF('ContaBot'), 40, 20);
+    
+    pdf.setFontSize(12);
+    pdf.setFont('helvetica', 'normal');
+    pdf.text(cleanTextForPDF('Reporte Financiero'), 40, 28);
+    
+    pdf.setFontSize(10);
+    pdf.text(cleanTextForPDF(getExportPeriodLabel()), 40, 34);
+    
+    pdf.setFontSize(10);
+    pdf.text(cleanTextForPDF(user?.username || 'Usuario'), 195, 20, { align: 'right' });
+    
+    pdf.setFontSize(8);
+    pdf.text(cleanTextForPDF(new Date().toLocaleDateString('es-MX')), 195, 26, { align: 'right' });
+
+    yPosition = 50;
+
+    // Resumen General
+    pdf.setTextColor(0, 153, 102);
+    pdf.setFontSize(14);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(cleanTextForPDF('Resumen General'), 15, yPosition);
+    yPosition += 5;
+
+    const totalIngresos = (analytics?.incomeByAccount || []).reduce((acc: number, curr: any) => acc + curr.value, 0);
+    const totalGastos = (analytics?.expensesByCategory || []).reduce((acc: number, curr: any) => acc + curr.value, 0);
+    const totalDeudas = (analytics?.debtsByCounterparty || []).reduce((acc: number, curr: any) => acc + curr.value, 0);
+    const totalPrestamos = (analytics?.loansByDebtor || []).reduce((acc: number, curr: any) => acc + curr.value, 0);
+
+    autoTable(pdf, {
+      startY: yPosition,
+      head: [[cleanTextForPDF('Concepto'), cleanTextForPDF('Monto')]],
+      body: [
+        [cleanTextForPDF('Total Ingresos del período'), cleanTextForPDF(`$${formatAmount(totalIngresos)}`)],
+        [cleanTextForPDF('Total Gastos del período'), cleanTextForPDF(`$${formatAmount(totalGastos)}`)],
+        [cleanTextForPDF('Balance (Ingresos - Gastos)'), cleanTextForPDF(`$${formatAmount(totalIngresos - totalGastos)}`)],
+        [cleanTextForPDF('Total Deudas pendientes'), cleanTextForPDF(`$${formatAmount(totalDeudas)}`)],
+        [cleanTextForPDF('Total Préstamos por cobrar'), cleanTextForPDF(`$${formatAmount(totalPrestamos)}`)]
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [0, 153, 102] },
+      margin: { left: 15, right: 15 }
+    });
+
+    yPosition = (pdf as any).lastAutoTable.finalY + 15;
+
+    // Movimientos
+    if (pdf.getCurrentPageInfo().pageNumber !== 1) {
+      // already added page
+    } else if (yPosition > 250) {
+      pdf.addPage();
+      yPosition = 20;
+    }
+
+    pdf.setTextColor(0, 153, 102);
+    pdf.setFontSize(14);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(cleanTextForPDF('Movimientos del Período'), 15, yPosition);
+    yPosition += 5;
+
+    const kindMap: Record<string, string> = {
+      expense: 'Gasto',
+      income: 'Ingreso',
+      debt_increase: 'T.Crédito',
+      debt_payment: 'Pago Deuda',
+      loan_given: 'Préstamo dado',
+      loan_repayment_received: 'Préstamo cobrado',
+      refund: 'Devolución',
+      loss: 'Pérdida'
+    };
+
+    const movimientosBody = recentEvents.map(e => {
+      const date = new Date(e.occurred_at).toLocaleDateString('es-MX');
+      const desc = e.description || e.merchant_name || '';
+      const cat = e.category || '';
+      const acc = e.account_name || '';
+      const tipo = kindMap[e.kind] || e.kind;
+      const isPositive = ['income', 'refund', 'loan_repayment_received'].includes(e.kind);
+      const isNegative = ['expense', 'loss', 'debt_payment', 'loan_given'].includes(e.kind);
+      const isWarning = e.kind === 'debt_increase';
+      const montoStr = `${isPositive ? '+' : isNegative ? '-' : ''}$${formatAmount(e.amount)}`;
+      
+      return [cleanTextForPDF(date), cleanTextForPDF(desc), cleanTextForPDF(cat), cleanTextForPDF(acc), cleanTextForPDF(tipo), cleanTextForPDF(montoStr), e.kind];
+    });
+
+    autoTable(pdf, {
+      startY: yPosition,
+      head: [[cleanTextForPDF('Fecha'), cleanTextForPDF('Descripción'), cleanTextForPDF('Categoría'), cleanTextForPDF('Cuenta'), cleanTextForPDF('Tipo'), cleanTextForPDF('Monto')]],
+      body: movimientosBody.map(row => row.slice(0, 6)),
+      theme: 'grid',
+      headStyles: { fillColor: [0, 153, 102] },
+      margin: { left: 15, right: 15 },
+      didParseCell: function(data) {
+        if (data.section === 'body' && data.column.index === 5) {
+          const kind = movimientosBody[data.row.index][6];
+          if (['income', 'refund', 'loan_repayment_received'].includes(kind)) {
+            data.cell.styles.textColor = [22, 163, 74]; // green-600
+          } else if (['expense', 'loss', 'debt_payment', 'loan_given'].includes(kind)) {
+            data.cell.styles.textColor = [220, 38, 38]; // red-600
+          } else if (kind === 'debt_increase') {
+            data.cell.styles.textColor = [217, 119, 6]; // amber-600
+          }
+        }
+      }
+    });
+
+    yPosition = (pdf as any).lastAutoTable.finalY + 15;
+
+    // Gráficas
+    if (pdf.getCurrentPageInfo().pageNumber !== (pdf as any).lastAutoTable.pageNumber) {
+      // already added page
+    } else if (yPosition > 200) {
+      pdf.addPage();
+      yPosition = 20;
+    }
+
+    pdf.setTextColor(0, 153, 102);
+    pdf.setFontSize(14);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(cleanTextForPDF('Análisis Visual'), 15, yPosition);
+    yPosition += 10;
+
+    const chartIds = [
+      { id: 'chart-balance-account', title: 'Saldos por Cuenta' },
+      { id: 'chart-expenses-category', title: 'Salidas por Categoría' },
+      { id: 'chart-debts', title: 'Deudas por Acreedor' },
+      { id: 'chart-loans', title: 'Préstamos por Cobrar' }
+    ];
+
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    for (const chart of chartIds) {
+      if (yPosition > 220) {
+        pdf.addPage();
+        yPosition = 20;
+      }
+      
+      pdf.setTextColor(0, 0, 0);
+      pdf.setFontSize(12);
+      pdf.text(cleanTextForPDF(chart.title), 15, yPosition);
+      yPosition += 5;
+
+      const el = document.getElementById(chart.id);
+      if (!el || el.offsetWidth === 0) {
+        pdf.setTextColor(150);
+        pdf.setFontSize(10);
+        pdf.text(cleanTextForPDF('Gráfica no disponible en este momento'), 15, yPosition);
+        pdf.setTextColor(0);
+        yPosition += 10;
+        continue;
+      }
+      
+      if (el) {
+        const canvas = await html2canvas(el, { scale: 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const imgProps = pdf.getImageProperties(imgData);
+        const pdfWidth = 180;
+        const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+        
+        if (yPosition + pdfHeight > 280) {
+          pdf.addPage();
+          yPosition = 20;
+        }
+        
+        pdf.addImage(imgData, 'PNG', 15, yPosition, pdfWidth, pdfHeight);
+        yPosition += pdfHeight + 15;
+      } else {
+        pdf.setTextColor(150, 150, 150);
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'italic');
+        pdf.text(cleanTextForPDF('Sin datos para este período'), 15, yPosition + 5);
+        yPosition += 20;
+      }
+    }
+
+    // Metas
+    pdf.addPage();
+    yPosition = 20;
+    pdf.setTextColor(0, 153, 102);
+    pdf.setFontSize(14);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(cleanTextForPDF('Mis Metas de Ahorro'), 15, yPosition);
+    yPosition += 5;
+
+    const metasBody = goals.map(g => {
+      const currentAmount = g.account_name && analytics?.accountBalances
+        ? (analytics.accountBalances[g.account_name] || 0)
+        : (g.current_amount || 0);
+      const progress = ((currentAmount / g.target_amount) * 100).toFixed(1) + '%';
+      const deadline = g.deadline ? new Date(g.deadline).toLocaleDateString('es-MX') : 'Sin fecha';
+      
+      return [
+        cleanTextForPDF(`${g.emoji || ''} ${g.name}`),
+        cleanTextForPDF(`$${formatAmount(g.target_amount)}`),
+        cleanTextForPDF(`$${formatAmount(currentAmount)}`),
+        cleanTextForPDF(progress),
+        cleanTextForPDF(g.account_name || 'Manual'),
+        cleanTextForPDF(deadline)
+      ];
+    });
+
+    if (metasBody.length > 0) {
+      autoTable(pdf, {
+        startY: yPosition,
+        head: [[cleanTextForPDF('Meta'), cleanTextForPDF('Objetivo'), cleanTextForPDF('Actual'), cleanTextForPDF('Progreso'), cleanTextForPDF('Cuenta'), cleanTextForPDF('Fecha límite')]],
+        body: metasBody,
+        theme: 'grid',
+        headStyles: { fillColor: [0, 153, 102] },
+        margin: { left: 15, right: 15 }
+      });
+    } else {
+      pdf.setTextColor(150, 150, 150);
+      pdf.setFontSize(10);
+      pdf.setFont('helvetica', 'italic');
+      pdf.text(cleanTextForPDF('No hay metas registradas'), 15, yPosition + 5);
+    }
+
+    // Análisis IA
+    if (aiChatMessages.length > 0) {
+      pdf.addPage();
+      yPosition = 20;
+      pdf.setTextColor(0, 153, 102);
+      pdf.setFontSize(14);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text(cleanTextForPDF('Análisis Inteligente ContaBot'), 15, yPosition);
+      yPosition += 10;
+
+      const rawText = aiChatMessages[0]?.text || '';
+      
+      const paragraphs = rawText
+        .split(/\n{1,}/)
+        .map(p => cleanTextForPDF(p.trim()))
+        .filter(p => p.length > 2)
+        .filter(p => !/saludo\s*personalizado/i.test(p));
+      
+      // Eliminar saludos duplicados: si hay más de un párrafo que 
+      // empieza con "¡Hola" o "Hola", conservar solo el primero
+      let helloFound = false;
+      const dedupedParagraphs = paragraphs.filter(p => {
+        const isHello = /^[¡!]?hola/i.test(p);
+        if (isHello) {
+          if (helloFound) return false;
+          helloFound = true;
+        }
+        return true;
+      });
+      
+      for (const paragraph of dedupedParagraphs) {
+        const isTitle = paragraph.startsWith('•') === false && 
+          paragraph.toUpperCase() === paragraph && 
+          paragraph.length < 50;
+        
+        if (isTitle) {
+          pdf.setFont('helvetica', 'bold');
+          pdf.setFontSize(11);
+          pdf.setTextColor(0, 153, 102);
+        } else if (paragraph.startsWith('•')) {
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(10);
+          pdf.setTextColor(60, 60, 60);
+        } else {
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(10);
+          pdf.setTextColor(40, 40, 40);
+        }
+        
+        const lines = pdf.splitTextToSize(paragraph, 178);
+        
+        if (yPosition + (lines.length * 6) > 270) {
+          pdf.addPage();
+          yPosition = 20;
+        }
+        
+        pdf.text(lines, 16, yPosition);
+        yPosition += (lines.length * 6) + 5;
+      }
+    }
+
+    // Footer
+    const pageCount = (pdf as any).internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      pdf.setPage(i);
+      pdf.setDrawColor(200, 200, 200);
+      pdf.line(15, 285, 195, 285);
+      pdf.setTextColor(150, 150, 150);
+      pdf.setFontSize(8);
+      pdf.text(cleanTextForPDF(`ContaBot — Reporte generado el ${new Date().toLocaleDateString('es-MX')}`), 105, 290, { align: 'center' });
+      pdf.text(cleanTextForPDF(`Página ${i} de ${pageCount}`), 195, 290, { align: 'right' });
+    }
+
+    pdf.save(`ContaBot_Reporte_${getActiveChatMonth()}.pdf`);
+  };
+
+  const handleExport = async () => {
+    if (isPremium !== true) {
+      setError("La exportación es exclusiva de ContaBot Pro 👑");
+      return;
+    }
+    setIsExporting(true);
+    try {
+      if (exportFormat === 'pdf') {
+        setShowExportModal(false);
+        await generatePDF();
+      } else if (exportFormat === 'excel') {
+        setShowExportModal(false);
+        const res = await fetch('/api/export/excel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: user.uid,
+            periodLabel: getExportPeriodLabel(),
+            events: recentEvents,
+            analytics: analytics,
+            goals: goals,
+            aiChatMessages: aiChatMessages,
+            username: user.username,
+            dateRange: dateRange
+          })
+        });
+        if (!res.ok) throw new Error('Error en exportación Excel');
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ContaBot_Reporte_${new Date().toISOString().slice(0,7)}.xlsx`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Error al exportar. Intenta de nuevo.");
+    } finally {
+      setIsExporting(false);
+      setExportFormat(null);
+    }
+  };
+
+  const loadAiChat = async (uid: string, month: string) => {
+    setIsAnalyzing(true);
+    try {
+      const docRef = doc(db, 'users', uid, 'aiChats', month);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists() && docSnap.data().messages?.length > 0) {
+        const data = docSnap.data();
+        setAiChatMessages(data.messages as Array<{role: 'user' | 'ai', text: string}>);
+        setAnalysisGenerated(true);
+        setAiAnalysis(data.messages[0]?.text || null);
+      } else {
+        setAiChatMessages([]);
+        setAnalysisGenerated(false);
+        setAiAnalysis(null);
+      }
+    } catch (err) {
+      console.error("Error loading AI chat:", err);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const saveAiChat = async (uid: string, month: string, messages: Array<{role: 'user' | 'ai', text: string}>) => {
+    try {
+      const docRef = doc(db, 'users', uid, 'aiChats', month);
+      const dataToSave: any = {
+        messages: messages,
+        updatedAt: new Date().toISOString(),
+        month: month
+      };
+      if (messages.length === 1) {
+        dataToSave.createdAt = new Date().toISOString();
+      }
+      await setDoc(docRef, dataToSave, { merge: true });
+    } catch (err) {
+      console.error("Error saving AI chat:", err);
+    }
+  };
+
+  const generateAIAnalysis = async () => {
+    if (isPremium !== true) {
+      setError("Esta función es exclusiva de ContaBot Pro 👑");
+      return;
+    }
+    setIsAnalyzing(true);
+    try {
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      const currentMonthEvents = recentEvents.filter(e => e.occurred_at && e.occurred_at.startsWith(currentMonth));
+      
+      const expensesParaAnalisis = (analytics?.expensesByCategory || [])
+        .filter((e: any) => e.name !== 'Traspaso' && e.name !== 'Interés');
+
+      const summaryData = {
+        gastosPorCategoria: expensesParaAnalisis,
+        totalIngresos: summary?.balance || 0,
+        totalGastos: summary?.expenses || 0,
+        metasActivas: goals.map(g => {
+          const currentAmount = g.account_name && analytics?.accountBalances
+            ? (analytics.accountBalances[g.account_name] || 0)
+            : (g.current_amount || 0);
+          return {
+            name: g.name,
+            emoji: g.emoji,
+            target_amount: g.target_amount,
+            current_amount: currentAmount,
+            account_name: g.account_name,
+            deadline: g.deadline,
+            progreso: Math.min((currentAmount / g.target_amount) * 100, 100).toFixed(1) + '%'
+          };
+        }),
+        usuario: user?.username || 'Usuario'
+      };
+
+      const systemPrompt = `Eres ContaBot, un asistente financiero personal amigable. 
+  Tu tarea es analizar los gastos mensuales del usuario y darle recomendaciones personalizadas.
+  Responde SIEMPRE en español, con tono amigable, cercano y motivador.
+  USA emojis frecuentemente para hacer el análisis más visual y agradable.
+  
+  ESTRUCTURA DE TU RESPUESTA (usa este formato exacto con secciones):
+  
+  1. Empieza DIRECTAMENTE con el resumen del mes, sin saludo previo ni introducción. El primer párrafo debe ser el RESUMEN DEL MES con los números.
+  2. 📊 RESUMEN DEL MES — breve resumen de ingresos vs gastos
+  3. 🔍 GASTOS QUE PUEDES EVITAR — identifica las 2-3 categorías donde más gasta y que son evitables (no incluyas renta, servicios básicos, salud)
+  4. 💡 RECOMENDACIONES — para cada gasto evitable, sugiere cuánto podría ahorrarse y qué hacer con ese dinero
+  5. 🎯 CONEXIÓN CON TUS METAS — si el usuario tiene metas activas, menciona cuánto más rápido podría cumplirlas si ahorra lo recomendado. Menciona la meta por nombre y emoji.
+  6. Cierra con un párrafo motivador y personalizado, sin título ni encabezado, solo el mensaje directamente.
+  
+  Sé específico con los números. Si no hay suficientes datos, dilo amablemente y anima al usuario a registrar más movimientos.
+  
+  IMPORTANTE: Los traspasos entre cuentas propias NO son gastos evitables, 
+  son movimientos internos del usuario. NUNCA los menciones como área de mejora.
+  El current_amount de cada meta ya refleja el saldo REAL de la cuenta vinculada, 
+  úsalo tal cual para calcular el progreso y las proyecciones.`;
+
+      const apiKey = (window as any)._SERVER_GEMINI_API_KEY || (window as any).GEMINI_API_KEY;
+      const genAI = new GoogleGenAI({ apiKey: apiKey });
+      
+      const response = await genAI.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Analiza mis finanzas de este mes: ${JSON.stringify(summaryData)}`,
+        config: {
+          systemInstruction: systemPrompt
+        }
+      });
+
+      const aiText = response.text || '';
+      setAiAnalysis(aiText);
+      setAiChatMessages([{ role: 'ai', text: aiText }]);
+      setAnalysisGenerated(true);
+      
+      if (user?.uid) {
+        const month = getActiveChatMonth();
+        await saveAiChat(user.uid, month, [{ role: 'ai', text: aiText }]);
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Error al generar el análisis. Intenta de nuevo.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const sendAiChatMessage = async () => {
+    if (aiChatInput.trim() === '') return;
+    
+    const userMessage = aiChatInput;
+    setAiChatMessages(prev => [...prev, { role: 'user', text: userMessage }]);
+    setAiChatInput('');
+    setIsAnalyzing(true);
+    
+    try {
+      const apiKey = (window as any)._SERVER_GEMINI_API_KEY || (window as any).GEMINI_API_KEY;
+      const genAI = new GoogleGenAI({ apiKey: apiKey });
+      
+      const systemPrompt = `Eres ContaBot, un asistente financiero personal amigable. 
+  Tu tarea es analizar los gastos mensuales del usuario y darle recomendaciones personalizadas.
+  Responde SIEMPRE en español, con tono amigable, cercano y motivador.
+  USA emojis frecuentemente para hacer el análisis más visual y agradable.
+  
+  ESTRUCTURA DE TU RESPUESTA (usa este formato exacto con secciones):
+  
+  1. Empieza DIRECTAMENTE con el resumen del mes, sin saludo previo ni introducción. El primer párrafo debe ser el RESUMEN DEL MES con los números.
+  2. 📊 RESUMEN DEL MES — breve resumen de ingresos vs gastos
+  3. 🔍 GASTOS QUE PUEDES EVITAR — identifica las 2-3 categorías donde más gasta y que son evitables (no incluyas renta, servicios básicos, salud)
+  4. 💡 RECOMENDACIONES — para cada gasto evitable, sugiere cuánto podría ahorrarse y qué hacer con ese dinero
+  5. 🎯 CONEXIÓN CON TUS METAS — si el usuario tiene metas activas, menciona cuánto más rápido podría cumplirlas si ahorra lo recomendado. Menciona la meta por nombre y emoji.
+  6. Cierra con un párrafo motivador y personalizado, sin título ni encabezado, solo el mensaje directamente.
+  
+  Sé específico con los números. Si no hay suficientes datos, dilo amablemente y anima al usuario a registrar más movimientos.
+  
+  El usuario ya tiene un análisis generado. Responde sus preguntas de seguimiento basándote en ese análisis y sus datos financieros.`;
+
+      const chatHistory = aiChatMessages.map(m => `${m.role === 'ai' ? 'ContaBot' : 'Usuario'}: ${m.text}`).join('\n\n');
+      
+      const response = await genAI.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Historial del chat:\n${chatHistory}\n\nUsuario: ${userMessage}`,
+        config: {
+          systemInstruction: systemPrompt
+        }
+      });
+
+      const aiResponseText = response.text || '';
+      const updatedMessages: Array<{role: 'user' | 'ai', text: string}> = [...aiChatMessages, 
+        { role: 'user', text: userMessage },
+        { role: 'ai', text: aiResponseText }
+      ];
+      setAiChatMessages(updatedMessages);
+
+      if (user?.uid) {
+        const month = getActiveChatMonth();
+        await saveAiChat(user.uid, month, updatedMessages);
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Error al enviar el mensaje. Intenta de nuevo.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
   const fetchGoals = async () => {
     if (!user?.id) return;
@@ -1583,7 +2238,11 @@ service cloud.firestore {
       const newSettings = { ...user.settings, theme: newTheme };
       try {
         // Use setDoc with merge: true to handle cases where the user document might not exist yet
-        await setDoc(doc(db, 'users', user.id), { settings: newSettings }, { merge: true });
+        await setDoc(
+          doc(db, 'users', user.id), 
+          { settings: newSettings }, 
+          { merge: true }
+        );
         setUser({ ...user, settings: newSettings });
       } catch (err: any) {
         console.error("Error updating theme:", err);
@@ -2027,6 +2686,11 @@ service cloud.firestore {
   };
 
   const startRecording = async () => {
+    if (isPremium === false && audioUsage >= 3) {
+      setError("Has alcanzado el límite de 3 audios por mes del plan gratuito. ¡Mejora a Pro para uso ilimitado! 🎙️");
+      return;
+    }
+
     // Desbloquear Web Speech API en iOS Safari (requiere gesto del usuario)
     if (window.speechSynthesis) {
       const unlock = new SpeechSynthesisUtterance('');
@@ -2062,6 +2726,7 @@ service cloud.firestore {
 
       mediaRecorder.start();
       setIsRecording(true);
+      incrementUsage("audio");
     } catch (err) {
       setError("No se pudo acceder al micrófono.");
     }
@@ -2076,6 +2741,11 @@ service cloud.firestore {
   };
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isPremium === false && photoUsage >= 3) {
+      setError("Has alcanzado el límite de 3 fotos por mes del plan gratuito. ¡Mejora a Pro para uso ilimitado! 📸");
+      return;
+    }
+
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
@@ -2093,6 +2763,8 @@ service cloud.firestore {
       setShowImageGroupModal(true);
       setShowCameraMenu(false);
     }
+    
+    incrementUsage("photo");
     // Reset input so same file can be selected again
     e.target.value = '';
   };
@@ -2880,6 +3552,27 @@ service cloud.firestore {
                 {t === 'day' ? 'Día' : t === 'month' ? 'Mes' : t === 'year' ? 'Año' : 'Todo'}
               </button>
             ))}
+            {view === 'analytics' && (
+              <>
+                <div className="w-px h-5 bg-gray-200 dark:bg-gray-700 mx-1" />
+                <button
+                  onClick={() => {
+                    if (isPremium) {
+                      setShowExportModal(true)
+                    } else {
+                      setError("La exportación es exclusiva de ContaBot Pro 👑")
+                    }
+                  }}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-emerald-500 transition-colors relative"
+                  title="Exportar datos"
+                >
+                  <Download size={18} />
+                  {!isPremium && (
+                    <Crown size={8} className="absolute -top-0.5 -right-0.5 text-amber-500" />
+                  )}
+                </button>
+              </>
+            )}
           </div>
 
           {filterType !== 'all' && (
@@ -3870,6 +4563,152 @@ service cloud.firestore {
 
     return (
     <div className="space-y-8">
+      {/* Análisis Inteligente con IA */}
+      <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none min-w-0 overflow-hidden">
+        {!analysisGenerated ? (
+          <div className="p-8 flex flex-col items-center text-center">
+            <div className="w-16 h-16 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-emerald-500/30">
+              <Sparkles className="text-white" size={32} />
+            </div>
+            <h3 className="text-2xl font-black text-gray-900 dark:text-white mb-2">Análisis Inteligente con IA</h3>
+            <p className="text-gray-500 dark:text-gray-400 max-w-md mb-6">
+              Descubre en qué estás gastando de más y cómo alcanzar tus metas más rápido
+            </p>
+            {isPremium === true ? (
+              <button
+                onClick={generateAIAnalysis}
+                disabled={isAnalyzing}
+                className="bg-emerald-500 hover:bg-emerald-600 text-white px-6 py-3 rounded-full font-bold flex items-center gap-2 transition-all disabled:opacity-70"
+              >
+                {isAnalyzing ? <Loader2 className="animate-spin" size={20} /> : <Sparkles size={20} />}
+                {isAnalyzing ? "Analizando tus finanzas..." : "Generar mi análisis del mes"}
+              </button>
+            ) : (
+              <div className="flex flex-col items-center gap-3">
+                <button disabled className="bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 px-6 py-3 rounded-full font-bold flex items-center gap-2 cursor-not-allowed">
+                  <Crown size={20} />
+                  Exclusivo para ContaBot Pro 👑
+                </button>
+                <button onClick={() => setView('planes')} className="text-sm text-emerald-600 dark:text-emerald-400 font-medium hover:underline">
+                  Ver planes
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col h-[500px]">
+            <div className="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50">
+              <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                <Sparkles className="text-emerald-500" size={18} />
+                Análisis del Mes
+                {(() => {
+                  const mesesNombres = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+                    'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+                  const chatMonth = getActiveChatMonth();
+                  const [year, monthNum] = chatMonth.split('-');
+                  const monthLabel = mesesNombres[parseInt(monthNum) - 1] + ' ' + year;
+                  return (
+                    <span className="text-xs font-bold text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded-lg">
+                      {monthLabel}
+                    </span>
+                  );
+                })()}
+              </h3>
+              <button
+                onClick={async () => {
+                  if (user?.uid) {
+                    const month = getActiveChatMonth();
+                    try {
+                      await setDoc(doc(db, 'users', user.uid, 'aiChats', month), 
+                        { messages: [], updatedAt: new Date().toISOString(), month }, 
+                        { merge: false }
+                      );
+                    } catch (err) {
+                      console.error("Error clearing AI chat:", err);
+                    }
+                  }
+                  setAiChatMessages([]);
+                  setAnalysisGenerated(false);
+                  setAiAnalysis(null);
+                  generateAIAnalysis();
+                }}
+                className="p-2 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-xl transition-colors"
+                title="Regenerar análisis"
+              >
+                <RefreshCw size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {aiChatMessages.map((msg, idx) => (
+                <div key={idx} className={cn("flex gap-3 max-w-[85%]", msg.role === 'user' ? "ml-auto flex-row-reverse" : "")}>
+                  {msg.role === 'user' ? (
+                    user?.avatar ? (
+                      <img 
+                        src={user.avatar} 
+                        alt="Avatar" 
+                        className="w-8 h-8 rounded-full object-cover flex-shrink-0"
+                      />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
+                        <UserIcon size={16} className="text-emerald-500" />
+                      </div>
+                    )
+                  ) : (
+                    <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center bg-emerald-500">
+                      <img src={APP_LOGO} alt="ContaBot" className="w-5 h-5 object-contain" />
+                    </div>
+                  )}
+                  <div className={cn("px-4 py-3 rounded-2xl text-sm", msg.role === 'user' ? "bg-emerald-500 text-white rounded-tr-sm" : "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-tl-sm")}>
+                    {msg.role === 'user' ? (
+                      msg.text
+                    ) : (
+                      <div className="markdown-body prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-gray-800 prose-pre:text-gray-100">
+                        <ReactMarkdown>{msg.text}</ReactMarkdown>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {isAnalyzing && (
+                <div className="flex gap-3 max-w-[85%]">
+                  <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center bg-emerald-500">
+                    <img src={APP_LOGO} alt="ContaBot" className="w-5 h-5 object-contain" />
+                  </div>
+                  <div className="px-4 py-4 rounded-2xl rounded-tl-sm bg-gray-100 dark:bg-gray-700 flex items-center gap-1">
+                    <motion.div animate={{ y: [0, -5, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0 }} className="w-1.5 h-1.5 bg-gray-400 rounded-full" />
+                    <motion.div animate={{ y: [0, -5, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.2 }} className="w-1.5 h-1.5 bg-gray-400 rounded-full" />
+                    <motion.div animate={{ y: [0, -5, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.4 }} className="w-1.5 h-1.5 bg-gray-400 rounded-full" />
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="p-4 border-t border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
+              <div className="flex gap-2">
+                <textarea
+                  value={aiChatInput}
+                  onChange={(e) => setAiChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      sendAiChatMessage();
+                    }
+                  }}
+                  placeholder="Pregúntame algo sobre tu análisis..."
+                  className="flex-1 resize-none h-10 max-h-32 min-h-[40px] py-2 px-4 bg-gray-100 dark:bg-gray-700 border-transparent focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-2xl text-sm dark:text-white"
+                  rows={1}
+                />
+                <button
+                  onClick={sendAiChatMessage}
+                  disabled={isAnalyzing || !aiChatInput.trim()}
+                  className="w-10 h-10 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-50"
+                >
+                  <Send size={18} className="ml-0.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
       {renderFilterBar()}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         {/* Balance by Account */}
@@ -3886,6 +4725,7 @@ service cloud.firestore {
                     exit={{ opacity: 0, scale: 0.95 }}
                     transition={{ duration: 0.4, ease: [0.04, 0.62, 0.23, 0.98] }}
                     className="w-full h-full"
+                    id="chart-balance-account"
                   >
                     <ResponsiveContainer width="99%" height="100%">
                       <PieChart>
@@ -3965,6 +4805,7 @@ service cloud.firestore {
                     exit={{ opacity: 0, scale: 0.9 }}
                     transition={{ duration: 0.3 }}
                     className="w-full h-full"
+                    id="chart-expenses-category"
                   >
                     <ResponsiveContainer width="99%" height="100%">
                       <PieChart>
@@ -4044,6 +4885,7 @@ service cloud.firestore {
                     exit={{ opacity: 0, scale: 0.9 }}
                     transition={{ duration: 0.3 }}
                     className="w-full h-full"
+                    id="chart-debts"
                   >
                     <ResponsiveContainer width="99%" height="100%">
                       <BarChart data={analytics?.debtsByCounterparty || []}>
@@ -4112,6 +4954,7 @@ service cloud.firestore {
                     exit={{ opacity: 0, scale: 0.9 }}
                     transition={{ duration: 0.3 }}
                     className="w-full h-full"
+                    id="chart-loans"
                   >
                     <ResponsiveContainer width="99%" height="100%">
                       <BarChart data={analytics?.loansByDebtor || []}>
@@ -5350,13 +6193,63 @@ service cloud.firestore {
 
       <main className="flex-1 max-w-4xl mx-auto w-full p-6 pb-[calc(8rem+env(safe-area-inset-bottom))]">
         {view === 'auth' && renderAuth()}
-        {view === 'home' && renderHome()}
-        {view === 'analytics' && renderAnalytics()}
-        {view === 'goals' && renderGoals()}
-        {view === 'settings' && renderSettings()}
-        {view === 'planes' && user && (
-          <PlanesView userId={user.uid} onBack={() => setView('home')} />
-        )}
+        <AnimatePresence mode="wait">
+          {view === 'home' && (
+            <motion.div
+              key="home"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              transition={{ duration: 0.2, ease: "easeInOut" }}
+            >
+              {renderHome()}
+            </motion.div>
+          )}
+          {view === 'analytics' && (
+            <motion.div
+              key="analytics"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.2, ease: "easeInOut" }}
+            >
+              {renderAnalytics()}
+            </motion.div>
+          )}
+          {view === 'goals' && (
+            <motion.div
+              key="goals"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.2, ease: "easeInOut" }}
+            >
+              {renderGoals()}
+            </motion.div>
+          )}
+          {view === 'settings' && (
+            <motion.div
+              key="settings"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.2, ease: "easeInOut" }}
+            >
+              {renderSettings()}
+            </motion.div>
+          )}
+          {view === 'planes' && user && (
+            <motion.div
+              key="planes"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.2, ease: "easeInOut" }}
+            >
+              <PlanesView userId={user.uid} onBack={() => setView('home')} />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </main>
 
       {/* Navigation Bar */}
@@ -5477,10 +6370,15 @@ service cloud.firestore {
                       <button 
                         type="button"
                         onClick={startRecording}
-                        className="p-3 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-2xl transition-all"
+                        className="p-3 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-2xl transition-all flex flex-col items-center justify-center gap-0.5"
                         disabled={isProcessing}
                       >
                         <Mic size={20} />
+                        {isPremium === false && (
+                          <span className={audioUsage < 3 ? "text-[9px] text-gray-400 leading-none" : "text-[9px] text-red-400 leading-none"}>
+                            {audioUsage < 3 ? 3 - audioUsage : 0}
+                          </span>
+                        )}
                       </button>
                       
                       <div className="relative">
@@ -5488,12 +6386,17 @@ service cloud.firestore {
                           type="button"
                           onClick={() => setShowCameraMenu(!showCameraMenu)}
                           className={cn(
-                            "p-3 rounded-2xl transition-all",
+                            "p-3 rounded-2xl transition-all flex flex-col items-center justify-center gap-0.5",
                             showCameraMenu ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30' : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
                           )}
                           disabled={isProcessing}
                         >
                           <Camera size={20} />
+                          {isPremium === false && (
+                            <span className={photoUsage < 3 ? "text-[9px] text-gray-400 leading-none" : "text-[9px] text-red-400 leading-none"}>
+                              {photoUsage < 3 ? 3 - photoUsage : 0}
+                            </span>
+                          )}
                         </button>
                         
                         <AnimatePresence>
@@ -5958,6 +6861,105 @@ service cloud.firestore {
                 >
                   Entendido
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showExportModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-white dark:bg-gray-900 w-full max-w-md rounded-[2.5rem] overflow-hidden shadow-2xl border border-gray-100 dark:border-gray-800"
+            >
+              <div className="p-8 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-bold dark:text-white">Exportar datos</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {getExportPeriodLabel()}
+                  </p>
+                </div>
+                <button onClick={() => {
+                  setShowExportModal(false);
+                  setExportFormat(null);
+                }} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-all">
+                  <X size={24} className="text-gray-400" />
+                </button>
+              </div>
+              <div className="p-8">
+                {filterType === 'day' && (
+                  <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 
+                    dark:border-amber-800 rounded-xl text-amber-700 dark:text-amber-400 
+                    text-xs font-medium flex items-center gap-2 mb-4">
+                    <AlertCircle size={14} />
+                    La exportación por día específico no está disponible. 
+                    Cambia el filtro a Mes, Año o Todo para exportar.
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-4 mb-8">
+                  <button
+                    onClick={() => setExportFormat('pdf')}
+                    className={`p-4 rounded-2xl border-2 flex flex-col items-center justify-center gap-2 transition-all ${
+                      exportFormat === 'pdf' 
+                        ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' 
+                        : 'border-gray-200 dark:border-gray-700 hover:border-emerald-300 dark:hover:border-emerald-700 text-gray-600 dark:text-gray-400'
+                    }`}
+                  >
+                    <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center justify-center mb-2">
+                      <span className="font-bold text-lg">PDF</span>
+                    </div>
+                    <span className="font-medium">Documento PDF</span>
+                    <span className="text-xs text-center opacity-70">Reporte visual con gráficas</span>
+                  </button>
+                  
+                  <button
+                    onClick={() => setExportFormat('excel')}
+                    className={`p-4 rounded-2xl border-2 flex flex-col items-center justify-center gap-2 transition-all ${
+                      exportFormat === 'excel' 
+                        ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' 
+                        : 'border-gray-200 dark:border-gray-700 hover:border-emerald-300 dark:hover:border-emerald-700 text-gray-600 dark:text-gray-400'
+                    }`}
+                  >
+                    <div className="w-12 h-12 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 flex items-center justify-center mb-2">
+                      <span className="font-bold text-lg">XLSX</span>
+                    </div>
+                    <span className="font-medium">Hoja de cálculo</span>
+                    <span className="text-xs text-center opacity-70">Datos crudos para análisis</span>
+                  </button>
+                </div>
+
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => {
+                      setShowExportModal(false);
+                      setExportFormat(null);
+                    }}
+                    className="flex-1 py-4 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-bold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleExport}
+                    disabled={exportFormat === null || isExporting || filterType === 'day'}
+                    className="flex-1 py-4 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {isExporting ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Exportando...
+                      </>
+                    ) : (
+                      <>
+                        <Download size={20} />
+                        Exportar
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>

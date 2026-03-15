@@ -11,6 +11,7 @@ import dotenv from "dotenv";
 import cron from "node-cron";
 import admin from "firebase-admin";
 import { GoogleGenAI } from '@google/genai';
+import * as XLSX from 'xlsx';
 
 dotenv.config();
 
@@ -1330,6 +1331,155 @@ async function startServer() {
     } catch (err: any) {
       console.error('❌ Error verificando sesión:', err);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/export/excel', (req, res) => {
+    try {
+      const { userId, periodLabel, events, analytics, goals, aiChatMessages, username, dateRange } = req.body;
+      
+      const wb = XLSX.utils.book_new();
+
+      // 1. Resumen General
+      const totalIngresos = (analytics?.incomeByAccount || [])
+        .reduce((sum: number, item: any) => sum + (Number(item.value) || 0), 0);
+      
+      const totalGastos = (analytics?.expensesByCategory || [])
+        .reduce((sum: number, item: any) => sum + (Number(item.value) || 0), 0);
+      
+      const totalDeudas = (analytics?.debtsByCounterparty || [])
+        .reduce((sum: number, item: any) => sum + (Number(item.value) || 0), 0);
+      
+      const totalPrestamos = (analytics?.loansByDebtor || [])
+        .reduce((sum: number, item: any) => sum + (Number(item.value) || 0), 0);
+      
+      const balance = totalIngresos - totalGastos;
+
+      const summaryData = [
+        ['Reporte Financiero ContaBot'],
+        ['Usuario', username || 'Usuario'],
+        ['Período', periodLabel],
+        ['Fecha de generación', new Date().toLocaleString()],
+        [],
+        ['Métrica', 'Monto'],
+        ['Ingresos Totales', totalIngresos],
+        ['Gastos Totales', totalGastos],
+        ['Balance del Período', balance],
+        ['Deudas Pendientes', totalDeudas],
+        ['Préstamos por Cobrar', totalPrestamos]
+      ];
+      const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumen');
+
+      const formatDate = (dateStr: string) => {
+        try {
+          return new Date(dateStr).toLocaleDateString('es-MX');
+        } catch { return dateStr || ''; }
+      };
+
+      // 2. Movimientos (Ingresos)
+      const incomeEvents = (events || []).filter((e: any) => e.kind === 'income' || e.kind === 'refund');
+      if (incomeEvents.length > 0) {
+        const wsIncome = XLSX.utils.json_to_sheet(incomeEvents.map((e: any) => ({
+          'Fecha': formatDate(e.occurred_at),
+          'Descripción': e.description || e.merchant_name || 'Sin descripción',
+          'Categoría': e.category || 'Sin categoría',
+          'Cuenta': e.account_name || 'Efectivo',
+          'Monto': Number(e.amount) || 0
+        })));
+        XLSX.utils.book_append_sheet(wb, wsIncome, 'Ingresos');
+      }
+
+      // 3. Movimientos (Gastos)
+      const expenseEvents = (events || []).filter((e: any) => e.kind === 'expense' || e.kind === 'loss');
+      if (expenseEvents.length > 0) {
+        const wsExpense = XLSX.utils.json_to_sheet(expenseEvents.map((e: any) => ({
+          'Fecha': formatDate(e.occurred_at),
+          'Descripción': e.description || e.merchant_name || 'Sin descripción',
+          'Categoría': e.category || 'Sin categoría',
+          'Cuenta': e.account_name || 'Efectivo',
+          'Monto': Number(e.amount) || 0
+        })));
+        XLSX.utils.book_append_sheet(wb, wsExpense, 'Gastos');
+      }
+
+      // 4. Deudas
+      const debtEvents = (events || []).filter((e: any) => e.kind === 'debt_increase' || e.kind === 'debt_payment');
+      if (debtEvents.length > 0) {
+        const wsDebts = XLSX.utils.json_to_sheet(debtEvents.map((e: any) => ({
+          'Fecha': formatDate(e.occurred_at),
+          'Descripción': e.description || e.merchant_name || 'Sin descripción',
+          'Categoría': e.category || 'Sin categoría',
+          'Cuenta': e.account_name || 'Efectivo',
+          'Tipo': e.kind === 'debt_increase' ? 'Aumento de Deuda' : 'Pago de Deuda',
+          'Monto': Number(e.amount) || 0
+        })));
+        XLSX.utils.book_append_sheet(wb, wsDebts, 'Tarjetas y Deudas');
+      }
+
+      // 5. Préstamos
+      const loanEvents = (events || []).filter((e: any) => e.kind === 'loan_given' || e.kind === 'loan_repayment_received');
+      if (loanEvents.length > 0) {
+        const wsLoans = XLSX.utils.json_to_sheet(loanEvents.map((e: any) => ({
+          'Fecha': formatDate(e.occurred_at),
+          'Descripción': e.description || e.merchant_name || 'Sin descripción',
+          'Categoría': e.category || 'Sin categoría',
+          'Cuenta': e.account_name || 'Efectivo',
+          'Tipo': e.kind === 'loan_given' ? 'Préstamo Otorgado' : 'Cobro de Préstamo',
+          'Monto': Number(e.amount) || 0
+        })));
+        XLSX.utils.book_append_sheet(wb, wsLoans, 'Préstamos');
+      }
+
+      // 6. Metas
+      if (goals && goals.length > 0) {
+        const accountBalances = analytics?.accountBalances || {};
+        
+        const wsGoals = XLSX.utils.json_to_sheet(goals.map((goal: any) => {
+          const currentAmount = goal.account_name && accountBalances[goal.account_name]
+            ? Number(accountBalances[goal.account_name])
+            : Number(goal.current_amount) || 0;
+          
+          const progress = goal.target_amount > 0
+            ? ((currentAmount / goal.target_amount) * 100).toFixed(1) + '%'
+            : '0%';
+          
+          return {
+            'Meta': goal.name || '',
+            'Objetivo': Number(goal.target_amount) || 0,
+            'Progreso Actual': currentAmount,
+            'Porcentaje': progress,
+            'Cuenta Vinculada': goal.account_name || 'Sin cuenta',
+            'Fecha Límite': goal.deadline || 'Sin fecha'
+          };
+        }));
+        XLSX.utils.book_append_sheet(wb, wsGoals, 'Metas');
+      }
+
+      // 7. Análisis IA
+      if (aiChatMessages && aiChatMessages.length > 0) {
+        const aiAnalysis = aiChatMessages.find((m: any) => m.role === 'assistant');
+        if (aiAnalysis) {
+          const wsAI = XLSX.utils.aoa_to_sheet([
+            ['Análisis de Inteligencia Artificial'],
+            [],
+            [aiAnalysis.content]
+          ]);
+          // Ajustar ancho de columna para el texto largo
+          wsAI['!cols'] = [{ wch: 100 }];
+          XLSX.utils.book_append_sheet(wb, wsAI, 'Análisis IA');
+        }
+      }
+
+      const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      
+      res.setHeader('Content-Disposition', `attachment; filename="ContaBot_Reporte_${periodLabel.replace(/\s+/g, '_')}.xlsx"`);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.send(buffer);
+
+    } catch (error) {
+      console.error('Error generating Excel:', error);
+      res.status(500).json({ error: 'Failed to generate Excel file' });
     }
   });
 
