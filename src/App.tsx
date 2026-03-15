@@ -296,6 +296,11 @@ service cloud.firestore {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isPremium, setIsPremium] = useState<boolean | null>(null);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetStep, setResetStep] = useState<1 | 2 | 3>(1);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetConfirmTimer, setResetConfirmTimer] = useState(5);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [aiChatMessages, setAiChatMessages] = useState<Array<{role: 'user' | 'ai', text: string}>>([]);
   const [aiChatInput, setAiChatInput] = useState('');
@@ -2251,6 +2256,144 @@ service cloud.firestore {
         }
       }
     }
+  };
+
+  useEffect(() => {
+    let timer: any;
+    if (resetStep === 3 && resetConfirmTimer > 0) {
+      timer = setInterval(() => {
+        setResetConfirmTimer(prev => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [resetStep, resetConfirmTimer]);
+
+  const executeFactoryReset = async () => {
+    if (resetConfirmText !== user?.username) {
+      setError("El nombre de usuario no coincide");
+      return;
+    }
+    
+    setIsResetting(true);
+    
+    try {
+      const uid = user.uid;
+      
+      // PASO 1: Borrar eventos por firebase uid
+      const eventsQuery1 = query(
+        collection(db, 'events'),
+        where('user_id', '==', uid)
+      );
+      const eventsSnap1 = await getDocs(eventsQuery1);
+      await Promise.all(eventsSnap1.docs.map(d => 
+        deleteDoc(doc(db, 'events', d.id))
+      ));
+      
+      // PASO 2: Borrar eventos por user.id (SQLite id por si acaso)
+      if (user.id && user.id !== uid) {
+        const eventsQuery2 = query(
+          collection(db, 'events'),
+          where('user_id', '==', user.id)
+        );
+        const eventsSnap2 = await getDocs(eventsQuery2);
+        await Promise.all(eventsSnap2.docs.map(d => 
+          deleteDoc(doc(db, 'events', d.id))
+        ));
+      }
+      
+      // PASO 3: Borrar metas por firebase uid
+      const goalsQuery1 = query(
+        collection(db, 'goals'),
+        where('user_id', '==', uid)
+      );
+      const goalsSnap1 = await getDocs(goalsQuery1);
+      await Promise.all(goalsSnap1.docs.map(d => 
+        deleteDoc(doc(db, 'goals', d.id))
+      ));
+      
+      // PASO 4: Borrar metas por user.id si es diferente
+      if (user.id && user.id !== uid) {
+        const goalsQuery2 = query(
+          collection(db, 'goals'),
+          where('user_id', '==', user.id)
+        );
+        const goalsSnap2 = await getDocs(goalsQuery2);
+        await Promise.all(goalsSnap2.docs.map(d => 
+          deleteDoc(doc(db, 'goals', d.id))
+        ));
+      }
+      
+      // PASO 5: Borrar chats de IA
+      const aiChatsSnap = await getDocs(
+        collection(db, 'users', uid, 'aiChats')
+      );
+      await Promise.all(aiChatsSnap.docs.map(d => 
+        deleteDoc(doc(db, 'users', uid, 'aiChats', d.id))
+      ));
+      
+      // PASO 6: Resetear documento del usuario en Firestore
+      // merge: false para sobreescribir completamente
+      await setDoc(doc(db, 'users', uid), {
+        username: user.username,
+        email: user.email || null,
+        phone: user.phone || null,
+        avatar: user.avatar || null,
+        accounts: [],
+        settings: { theme: user.settings?.theme || 'light' },
+        usage: { 
+          photos: 0, 
+          audio: 0, 
+          month: new Date().toISOString().slice(0, 7) 
+        }
+      }, { merge: false });
+      
+      // PASO 7: Borrar eventos de SQLite via API
+      try {
+        await fetch(`/api/events?userId=${uid}`, { method: 'DELETE' });
+      } catch (e) {
+        console.error('Error borrando SQLite events:', e);
+        // No es crítico, continuar
+      }
+      
+      // PASO 8: Resetear estados locales inmediatamente
+      setRecentEvents([]);
+      setSummary({ balance: 0, expenses: 0, debts: 0, loans: 0 });
+      setAnalytics(null);
+      setGoals([]);
+      setAiChatMessages([]);
+      setAiAnalysis(null);
+      setAnalysisGenerated(false);
+      setProposal(null);
+      setPhotoUsage(0);
+      setAudioUsage(0);
+      setUser((prev: any) => ({
+        ...prev,
+        accounts: [],
+        settings: { theme: prev.settings?.theme || 'light' }
+      }));
+      
+      // PASO 9: Cerrar modal y limpiar
+      setShowResetModal(false);
+      setResetStep(1);
+      setResetConfirmText('');
+      setResetConfirmTimer(5);
+      
+      // PASO 10: Mostrar éxito
+      setSuccess("¡App reiniciada exitosamente! Empieza de nuevo 🌱");
+      
+    } catch (err: any) {
+      console.error("Error en factory reset:", err);
+      setError("Error al reiniciar la app. Intenta de nuevo.");
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
+  const closeResetModal = () => {
+    setShowResetModal(false);
+    setResetStep(1);
+    setResetConfirmText('');
+    setResetConfirmTimer(5);
   };
 
   const stopSpeaking = () => {
@@ -5870,6 +6013,28 @@ service cloud.firestore {
               Salir
             </button>
           </div>
+
+          <div className="flex items-center justify-between p-4 bg-red-50 dark:bg-red-900/10 rounded-2xl border border-red-100 dark:border-red-900/30">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-red-100 dark:bg-red-900/30 rounded-xl">
+                <Shield className="text-red-500" />
+              </div>
+              <div>
+                <p className="font-bold text-red-600 dark:text-red-400">
+                  Reinicio de Fábrica
+                </p>
+                <p className="text-xs text-red-400 dark:text-red-500">
+                  Borra todos tus datos permanentemente
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowResetModal(true)}
+              className="px-4 py-2 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-xl font-bold hover:bg-red-200 dark:hover:bg-red-900/50 transition-all text-sm"
+            >
+              Reiniciar
+            </button>
+          </div>
         </div>
       </motion.div>
     </div>
@@ -6960,6 +7125,157 @@ service cloud.firestore {
                     )}
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showResetModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-white dark:bg-gray-900 w-full max-w-md rounded-[2.5rem] overflow-hidden shadow-2xl border border-gray-100 dark:border-gray-800"
+            >
+              <div className="p-8 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-bold dark:text-white">
+                    {resetStep === 1 && "Reinicio de Fábrica"}
+                    {resetStep === 2 && "¿Estás completamente seguro?"}
+                    {resetStep === 3 && "Confirma tu identidad"}
+                  </h3>
+                </div>
+                <button onClick={closeResetModal} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-all">
+                  <X size={24} className="text-gray-400" />
+                </button>
+              </div>
+              <div className="p-8">
+                {resetStep === 1 && (
+                  <div className="flex flex-col items-center text-center">
+                    <div className="p-4 bg-red-100 dark:bg-red-900/30 rounded-2xl mb-6">
+                      <Shield size={48} className="text-red-500" />
+                    </div>
+                    <p className="text-gray-600 dark:text-gray-400 mb-6">
+                      Esta acción es IRREVERSIBLE. Se eliminará permanentemente:
+                    </p>
+                    <ul className="text-left text-sm text-gray-600 dark:text-gray-400 space-y-2 mb-6 w-full bg-gray-50 dark:bg-gray-800/50 p-4 rounded-2xl">
+                      <li className="flex items-center gap-2">• Todos tus movimientos y transacciones</li>
+                      <li className="flex items-center gap-2">• Todas tus metas de ahorro</li>
+                      <li className="flex items-center gap-2">• Todo el historial del chat con la IA</li>
+                      <li className="flex items-center gap-2">• Todas tus cuentas configuradas</li>
+                      <li className="flex items-center gap-2">• Tus contadores de uso mensual</li>
+                    </ul>
+                    <div className="w-full p-4 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-900/30 rounded-2xl text-emerald-700 dark:text-emerald-400 text-sm font-medium mb-8 text-left flex items-start gap-3">
+                      <Check size={18} className="shrink-0 mt-0.5" />
+                      <div>
+                        ✓ Se mantendrá tu cuenta, nombre, foto y {isPremium ? 'tu suscripción Premium activa.' : 'configuración de tema.'}
+                      </div>
+                    </div>
+                    <div className="flex gap-4 w-full">
+                      <button
+                        onClick={closeResetModal}
+                        className="flex-1 py-4 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-bold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={() => setResetStep(2)}
+                        className="flex-1 py-4 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-all shadow-lg shadow-red-500/20"
+                      >
+                        Entiendo, continuar →
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {resetStep === 2 && (
+                  <div className="flex flex-col items-center text-center">
+                    <div className="p-4 bg-amber-100 dark:bg-amber-900/30 rounded-2xl mb-6">
+                      <AlertCircle size={48} className="text-amber-500" />
+                    </div>
+                    <p className="text-gray-600 dark:text-gray-400 mb-8 text-lg">
+                      No podrás recuperar tus datos después de esto. Esta acción no se puede deshacer.
+                    </p>
+                    <div className="flex flex-col gap-4 w-full">
+                      <button
+                        onClick={() => {
+                          setResetStep(3);
+                          setResetConfirmTimer(5);
+                        }}
+                        className="w-full py-4 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-all shadow-lg shadow-red-500/20"
+                      >
+                        Sí, quiero borrar todo
+                      </button>
+                      <button
+                        onClick={closeResetModal}
+                        className="w-full py-4 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-bold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all"
+                      >
+                        No, mejor no
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {resetStep === 3 && (
+                  <div className="flex flex-col items-center text-center">
+                    <div className="p-4 bg-red-100 dark:bg-red-900/30 rounded-2xl mb-6">
+                      <Trash2 size={48} className="text-red-500" />
+                    </div>
+                    <p className="text-gray-600 dark:text-gray-400 mb-4">
+                      Escribe tu nombre de usuario exactamente para confirmar:
+                    </p>
+                    <div className="px-3 py-1 bg-gray-100 dark:bg-gray-700 rounded-lg font-mono font-bold text-gray-700 dark:text-gray-300 mb-6">
+                      {user?.username}
+                    </div>
+                    <div className="w-full mb-8 text-left">
+                      <input
+                        type="text"
+                        value={resetConfirmText}
+                        onChange={(e) => setResetConfirmText(e.target.value)}
+                        placeholder="Escribe tu nombre de usuario"
+                        className={`w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border-2 rounded-xl outline-none transition-all ${
+                          resetConfirmText.length > 0 && resetConfirmText !== user?.username
+                            ? 'border-red-500 focus:border-red-500'
+                            : resetConfirmText === user?.username
+                            ? 'border-emerald-500 focus:border-emerald-500'
+                            : 'border-gray-200 dark:border-gray-700 focus:border-emerald-500'
+                        } dark:text-white`}
+                      />
+                      <div className="h-6 mt-2 text-sm font-medium">
+                        {resetConfirmText === user?.username && (
+                          <span className="text-emerald-500">✓ Nombre confirmado</span>
+                        )}
+                        {resetConfirmText.length > 0 && resetConfirmText !== user?.username && (
+                          <span className="text-red-500">✗ No coincide</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-4 w-full">
+                      <button
+                        onClick={closeResetModal}
+                        className="flex-1 py-4 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-bold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={executeFactoryReset}
+                        disabled={resetConfirmText !== user?.username || isResetting || resetConfirmTimer > 0}
+                        className="flex-1 py-4 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-all shadow-lg shadow-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {isResetting ? (
+                          <Loader2 size={20} className="animate-spin" />
+                        ) : resetConfirmTimer > 0 ? (
+                          `Espera ${resetConfirmTimer}s...`
+                        ) : (
+                          "Borrar todo permanentemente"
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
           </div>

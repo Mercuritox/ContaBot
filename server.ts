@@ -1076,6 +1076,21 @@ async function startServer() {
     }
   });
 
+  app.delete("/api/events", (req, res) => {
+    const userId = req.query.userId as string;
+    if (!userId) {
+      return res.status(400).json({ error: "userId requerido" });
+    }
+    try {
+      db.prepare("DELETE FROM events WHERE user_id = ?").run(userId);
+      db.prepare("DELETE FROM goals WHERE user_id = ?").run(userId);
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Error deleting user data:", err);
+      res.status(500).json({ error: "Error al borrar datos" });
+    }
+  });
+
   // ===== CREAR SESIÓN DE PAGO =====
   app.post('/api/stripe/create-checkout-session', async (req, res) => {
     let { priceId, planType, userId } = req.body;
