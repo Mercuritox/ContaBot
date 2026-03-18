@@ -47,3 +47,45 @@ self.addEventListener('activate', (event) => {
     })
   );
 });
+
+// Recibir notificaciones push
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+  
+  let data = {};
+  try {
+    data = event.data.json();
+  } catch (e) {
+    data = { title: 'ContaBot', body: event.data.text() };
+  }
+  
+  const title = data.title || 'ContaBot';
+  const options = {
+    body: data.body || '',
+    icon: data.icon || '/icon-192x192.png',
+    badge: data.badge || '/icon-192x192.png',
+    data: data.data || {},
+    vibrate: [200, 100, 200],
+    requireInteraction: false,
+    tag: 'contabot-notification'
+  };
+  
+  event.waitUntil(
+    self.registration.showNotification(title, options)
+  );
+});
+
+// Manejar click en la notificación
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then((clientList) => {
+        if (clientList.length > 0) {
+          return clientList[0].focus();
+        }
+        return clients.openWindow('/');
+      })
+  );
+});

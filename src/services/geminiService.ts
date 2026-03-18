@@ -1,6 +1,7 @@
-import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 
-const SYSTEM_INSTRUCTION = `Eres "ContaBot", un asistente personal de contabilidad personal con identidad propia. Tu objetivo es ayudar al usuario a llevar el control de sus finanzas de manera amigable y eficiente.
+import { GoogleGenAI } from '@google/genai';
+
+export const SYSTEM_INSTRUCTION = `Eres "ContaBot", un asistente personal de contabilidad personal con identidad propia. Tu objetivo es ayudar al usuario a llevar el control de sus finanzas de manera amigable y eficiente.
 A partir de UN input del usuario (puede incluir texto, audio o foto de ticket), tu trabajo es interpretar la intención y devolver ÚNICAMENTE un JSON válido que represente una propuesta para: crear un movimiento, modificar un movimiento existente, o hacer una consulta.
 
 IDENTIDAD Y TONO:
@@ -79,6 +80,9 @@ REGLAS CRÍTICAS
   1. Si el usuario menciona "Tarjeta" de forma genérica (ej. "Pagué con tarjeta"), DEBES poner el "status" en "needs_clarification" y añadir a "follow_up_questions" la pregunta: "¿Fue con tarjeta de crédito o débito?".
   2. Si el usuario menciona "Tarjeta de Crédito" de forma genérica sin especificar el banco o nombre de la cuenta (ej. "Pagué con mi tarjeta de crédito"), DEBES poner el "status" en "needs_clarification" y añadir a "follow_up_questions" la pregunta: "¿De qué cuenta o banco es la tarjeta de crédito?".
   3. NO intentes adivinar la cuenta si no está clara.
+  4. NUNCA uses el nombre de una persona (ej. 'Mamá', 'Juan') como 'account_name' para un ingreso (income), gasto (expense) o transferencia (transfer). El dinero siempre entra o sale de una cuenta real (ej. 'Efectivo', 'Banamex'). Las personas son ACREEDORES o DEUDORES (merchant_name).
+  5. Si el usuario transfiere o devuelve dinero a una persona a la que le debe (ej. "le transferí a mi mamá el dinero que me dio a guardar"), esto ES UN PAGO DE DEUDA (debt_payment), NO una transferencia entre cuentas.
+  6. Si el usuario PAGA una Tarjeta de Crédito o Deuda (ej. "pagué 1000 a mi tarjeta BBVA", "transferí 500 a Didi Crédito"), esto ES UN PAGO DE DEUDA (debt_payment), NUNCA una transferencia (transfer). Las transferencias son SOLO entre cuentas de débito/efectivo propias.
 - MEMORIA DE DEUDAS (CRÍTICO): Se te proporciona un objeto "debt_balances" con el saldo actual de cada acreedor.
   1. Si el usuario dice que "saldó", "pagó todo" o "liquidó" una deuda con alguien (ej. "Saldé mi deuda con Mamá"), DEBES buscar el saldo en "debt_balances".
   2. Si encuentras el saldo, úsalo AUTOMÁTICAMENTE como el "amount" del movimiento "debt_payment".
@@ -275,31 +279,17 @@ export const safeJsonStringify = (obj: any) => {
 };
 
 export async function processMultimodalInput(
-  input: { text?: string; audio?: string; audioMimeType?: string; image?: string; images?: string[]; instruction?: string },
-  context: GeminiContext
+  input: { 
+    text?: string; 
+    audio?: string; 
+    audioMimeType?: string; 
+    image?: string; 
+    images?: string[]; 
+    instruction?: string 
+  },
+  context: GeminiContext,
+  uid?: string
 ) {
-  // Try to find the API key in multiple locations
-  // We check window variables first as they are most likely to be injected at runtime in production
-  let apiKey = 
-    (window as any)._SERVER_GEMINI_API_KEY ||
-    (window as any).GEMINI_API_KEY ||
-    (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) || 
-    (import.meta.env?.VITE_GEMINI_API_KEY) ||
-    (typeof process !== 'undefined' && process.env?.API_KEY);
-
-  // Clean the key (remove quotes if they were accidentally included)
-  if (typeof apiKey === 'string') {
-    apiKey = apiKey.trim().replace(/^["']|["']$/g, '');
-  }
-
-  if (!apiKey || apiKey === "" || apiKey === "undefined" || apiKey === "null" || apiKey.length < 10) {
-    console.error("Gemini API Key is missing, empty or too short. Value:", apiKey);
-    throw new Error("API_KEY_MISSING");
-  }
-
-  // Log key presence (first 3 chars for debugging)
-  console.log(`Gemini API Key detected. Starts with: ${apiKey.substring(0, 3)}... Length: ${apiKey.length}`);
-
   const parts: any[] = [];
   
   if (input.text) {
@@ -315,7 +305,6 @@ export async function processMultimodalInput(
     });
   }
   
-  // Handle single image (legacy)
   if (input.image) {
     parts.push({
       inlineData: {
@@ -325,7 +314,6 @@ export async function processMultimodalInput(
     });
   }
 
-  // Handle multiple images
   if (input.images && input.images.length > 0) {
     input.images.forEach(img => {
       parts.push({
@@ -348,84 +336,88 @@ Input: Process this input according to the system instructions.
 
   parts.push({ text: promptText });
 
-  try {
-    const response: GenerateContentResponse = await withRetry(async () => {
-      // Create a fresh instance for each call to ensure we use the latest key
-      const genAI = new GoogleGenAI({ apiKey: apiKey });
-      
-      return await genAI.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: { parts },
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          responseMimeType: "application/json"
-        },
-      });
-    });
+  let inputType: 'text' | 'photo' | 'audio' = 'text';
+  if (input.audio) inputType = 'audio';
+  else if (input.image || (input.images && input.images.length > 0)) inputType = 'photo';
 
-    const text = response.text;
-    console.log("Raw Gemini Text Response:", text);
-    if (!text) {
-      throw new Error("EMPTY_RESPONSE");
-    }
-
-    try {
-      const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
-      
-      // Infer operation if missing
-      if (!parsed.operation) {
-        if (parsed.result?.query) {
-          parsed.operation = 'query';
-        } else if (parsed.result?.create_goal) {
-          parsed.operation = 'create_goal';
-        } else if (parsed.result?.update) {
-          parsed.operation = 'update';
-        } else if (parsed.result?.create || parsed.result?.event || parsed.result?.kind || parsed.result?.amount !== undefined) {
-          parsed.operation = 'create';
-        } else if (parsed.result?.user_feedback_message) {
-          // If it only has a message, it's likely a query response
-          parsed.operation = 'query';
-        }
-      }
-
-      // Normalize create.event if Gemini flattened it
-      if (parsed?.result && !parsed.result.create) {
-        if (parsed.result.event) {
-          parsed.result.create = { event: parsed.result.event };
-          delete parsed.result.event;
-        } else if (parsed.operation === 'create' && (parsed.result.kind || parsed.result.amount !== undefined || parsed.result.description)) {
-          parsed.result.create = { event: { ...parsed.result } };
-        }
-      }
-
-      if (parsed?.result?.create && !parsed.result.create.event) {
-        if (parsed.result.create.kind || parsed.result.create.amount !== undefined || parsed.result.create.description) {
-          parsed.result.create = { event: { ...parsed.result.create } };
-        }
-      }
-
-      // If it claims to be a create but has absolutely no event data, it's likely a hallucinated create for a query
-      if (parsed.operation === 'create' && (!parsed.result?.create?.event || (!parsed.result.create.event.kind && parsed.result.create.event.amount === undefined && !parsed.result.create.event.description))) {
-        parsed.operation = 'query';
-        if (!parsed.result) parsed.result = {};
-        if (!parsed.result.query) parsed.result.query = { intent: "general_query" };
-      }
-
-      // Normalize create_goal.goal if Gemini flattened it
-      if (parsed?.result?.create_goal && !parsed.result.create_goal.goal) {
-        if (parsed.result.create_goal.name || parsed.result.create_goal.target_amount !== undefined) {
-          parsed.result.create_goal = { goal: { ...parsed.result.create_goal } };
-        }
-      }
-
-      return parsed;
-    } catch (e) {
-      console.error("JSON Parse error:", text);
-      throw new Error("INVALID_JSON_RESPONSE");
-    }
-  } catch (e: any) {
-    console.error("Gemini processing error:", e);
-    // Rethrow to let App.tsx handle it
-    throw e;
+  const apiKey = (window as any)._SERVER_GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_GOOGLE_API_KEY;
+  if (!apiKey) {
+    throw new Error('API_KEY_MISSING');
   }
+
+  const ai = new GoogleGenAI({ apiKey });
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: { parts },
+    config: {
+      systemInstruction: SYSTEM_INSTRUCTION,
+      responseMimeType: "application/json",
+      temperature: 0.2,
+    }
+  });
+
+  const rawText = response.text;
+  if (!rawText) {
+    throw new Error("EMPTY_RESPONSE");
+  }
+
+  let parsed;
+  try {
+    let jsonStr = rawText.trim();
+    if (jsonStr.startsWith('```json')) {
+      jsonStr = jsonStr.substring(7);
+    } else if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.substring(3);
+    }
+    if (jsonStr.endsWith('```')) {
+      jsonStr = jsonStr.substring(0, jsonStr.length - 3);
+    }
+    parsed = JSON.parse(jsonStr.trim());
+  } catch (e) {
+    console.error("Error parsing AI response:", rawText);
+    throw new Error("INVALID_JSON_RESPONSE");
+  }
+  
+  console.log("Raw Gemini Result:", parsed);
+  
+  if (!parsed) throw new Error("EMPTY_RESPONSE");
+
+  // Normalización idéntica a la versión anterior
+  if (!parsed.operation) {
+    if (parsed.result?.query) parsed.operation = 'query';
+    else if (parsed.result?.create_goal) parsed.operation = 'create_goal';
+    else if (parsed.result?.update) parsed.operation = 'update';
+    else if (parsed.result?.create || parsed.result?.event || parsed.result?.kind || parsed.result?.amount !== undefined) parsed.operation = 'create';
+    else if (parsed.result?.user_feedback_message) parsed.operation = 'query';
+  }
+
+  if (parsed?.result && !parsed.result.create) {
+    if (parsed.result.event) {
+      parsed.result.create = { event: parsed.result.event };
+      delete parsed.result.event;
+    } else if (parsed.operation === 'create' && (parsed.result.kind || parsed.result.amount !== undefined || parsed.result.description)) {
+      parsed.result.create = { event: { ...parsed.result } };
+    }
+  }
+
+  if (parsed?.result?.create && !parsed.result.create.event) {
+    if (parsed.result.create.kind || parsed.result.create.amount !== undefined || parsed.result.create.description) {
+      parsed.result.create = { event: { ...parsed.result.create } };
+    }
+  }
+
+  if (parsed.operation === 'create' && (!parsed.result?.create?.event || (!parsed.result.create.event.kind && parsed.result.create.event.amount === undefined && !parsed.result.create.event.description))) {
+    parsed.operation = 'query';
+    if (!parsed.result) parsed.result = {};
+    if (!parsed.result.query) parsed.result.query = { intent: "general_query" };
+  }
+
+  if (parsed?.result?.create_goal && !parsed.result.create_goal.goal) {
+    if (parsed.result.create_goal.name || parsed.result.create_goal.target_amount !== undefined) {
+      parsed.result.create_goal = { goal: { ...parsed.result.create_goal } };
+    }
+  }
+
+  return parsed;
 }

@@ -12,6 +12,7 @@ import cron from "node-cron";
 import admin from "firebase-admin";
 import { GoogleGenAI } from '@google/genai';
 import * as XLSX from 'xlsx';
+import webpush from 'web-push';
 
 dotenv.config();
 
@@ -245,6 +246,14 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    firebase_uid TEXT NOT NULL,
+    subscription TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(firebase_uid)
+  );
 `);
 
 // Migration: Ensure all columns exist in events table
@@ -299,6 +308,12 @@ try {
 async function startServer() {
   // Cargar secretos de GCP antes de iniciar el servidor
   await loadSecretsFromGCP();
+
+  webpush.setVapidDetails(
+    'mailto:contabot@gmail.com',
+    process.env.VAPID_PUBLIC_KEY || '',
+    process.env.VAPID_PRIVATE_KEY || ''
+  );
 
   const app = express();
   const PORT = 3000;
@@ -1498,6 +1513,272 @@ async function startServer() {
     }
   });
 
+  // Guardar suscripción push
+  app.post('/api/notifications/subscribe', async (req, res) => {
+    const { firebase_uid, subscription } = req.body;
+    
+    if (!firebase_uid || !subscription) {
+      return res.status(400).json({ 
+        error: 'firebase_uid y subscription requeridos',
+        received: { firebase_uid: !!firebase_uid, subscription: !!subscription }
+      });
+    }
+    
+    try {
+      await firestore
+        .collection('push_subscriptions')
+        .doc(firebase_uid)
+        .set({ 
+          subscription: JSON.stringify(subscription),
+          updatedAt: new Date().toISOString()
+        });
+      
+      res.json({ success: true, saved: true });
+    } catch (err: any) {
+      console.error('Error Firestore:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Eliminar suscripción push
+  app.delete('/api/notifications/subscribe', async (req, res) => {
+    const { firebase_uid } = req.body;
+    if (!firebase_uid) {
+      return res.status(400).json({ error: 'firebase_uid requerido' });
+    }
+    try {
+      await firestore
+        .collection('push_subscriptions')
+        .doc(firebase_uid)
+        .delete();
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: 'Error al eliminar suscripción' });
+    }
+  });
+
+  const sendPushToUser = async (
+    firebaseUid: string,
+    title: string,
+    body: string,
+    data?: Record<string, string>
+  ) => {
+    try {
+      const doc = await firestore
+        .collection('push_subscriptions')
+        .doc(firebaseUid)
+        .get();
+      
+      if (!doc.exists) return false;
+      const subscription = JSON.parse(doc.data()!.subscription);
+      
+      const payload = JSON.stringify({
+        title,
+        body,
+        icon: '/icon-192x192.png',
+        badge: '/icon-192x192.png',
+        data: data || {}
+      });
+      
+      await webpush.sendNotification(subscription, payload);
+      return true;
+    } catch (err: any) {
+      if (err.statusCode === 410 || err.statusCode === 404) {
+        // Suscripción expirada — eliminarla
+        await firestore
+          .collection('push_subscriptions')
+          .doc(firebaseUid)
+          .delete();
+      }
+      console.error('Error enviando push a', firebaseUid, err.message);
+      return false;
+    }
+  };
+
+  app.get('/api/notifications/vapid-key', (req, res) => {
+    const key = process.env.VAPID_PUBLIC_KEY || '';
+    if (!key) {
+      return res.status(503).json({ error: 'VAPID key no configurada' });
+    }
+    res.json({ publicKey: key });
+  });
+
+  app.post('/api/notifications/check-goals', async (req, res) => {
+    const { firebase_uid } = req.body;
+    if (!firebase_uid) {
+      return res.status(400).json({ error: 'firebase_uid requerido' });
+    }
+    try {
+      const goalsSnap = await firestore
+        .collection('goals')
+        .where('user_id', '==', firebase_uid)
+        .get();
+
+      if (goalsSnap.empty) return res.json({ notified: false });
+
+      const eventsSnap = await firestore
+        .collection('events')
+        .where('user_id', '==', firebase_uid)
+        .get();
+
+      let notified = false;
+
+      for (const goalDoc of goalsSnap.docs) {
+        const goal = goalDoc.data();
+        if (goal.completed) continue;
+        if (!goal.target_amount || !goal.account_name) continue;
+
+        // Calcular balance de la cuenta de la meta sumando ingresos y restando gastos
+        const goalEvents = eventsSnap.docs
+          .map(d => d.data())
+          .filter(e => e.accounts?.primary_account_ref?.name === goal.account_name);
+
+        const balance = goalEvents.reduce((sum: number, e: any) => {
+          if (['income', 'loan_repayment_received', 'refund'].includes(e.kind)) {
+            return sum + (e.amount || 0);
+          }
+          if (['expense', 'loss', 'loan_given'].includes(e.kind)) {
+            return sum - (e.amount || 0);
+          }
+          return sum;
+        }, 0);
+
+        console.log('🎯 Meta:', goal.name, '| Target:', goal.target_amount, '| Cuenta:', goal.account_name, '| Balance encontrado:', balance, '| Completada:', goal.completed);
+
+        if (balance >= goal.target_amount) {
+          const emoji = goal.emoji || '🎯';
+          await sendPushToUser(
+            firebase_uid,
+            `${emoji} ¡Meta completada!`,
+            `¡Felicidades! Alcanzaste tu meta "${goal.name}" de $${goal.target_amount.toLocaleString('es-MX')} MXN 🎉`,
+            { action: 'open_goals' }
+          );
+          notified = true;
+        }
+      }
+
+      res.json({ notified });
+    } catch (err) {
+      console.error('Error checking goals:', err);
+      res.status(500).json({ error: 'Error al verificar metas' });
+    }
+  });
+
+  app.post('/api/notifications/trigger-daily', async (req, res) => {
+    const secret = req.headers['x-scheduler-secret'];
+    if (secret !== process.env.SCHEDULER_SECRET) {
+      return res.status(401).json({ error: 'No autorizado' });
+    }
+
+    try {
+      const subsSnap = await firestore
+        .collection('push_subscriptions')
+        .get();
+      
+      const subs = subsSnap.docs.map(d => ({ 
+        firebase_uid: d.id 
+      }));
+
+      console.log(`🔔 Ejecutando notificaciones diarias para ${subs.length} usuarios`);
+      
+      const now = new Date();
+      const results = { notified: 0, skipped: 0, errors: 0 };
+
+      for (const { firebase_uid } of subs) {
+        try {
+          const today = new Date().toISOString().slice(0, 10);
+          const twoDaysAgo = new Date(
+            Date.now() - 2 * 24 * 60 * 60 * 1000
+          ).toISOString().slice(0, 10);
+
+          const eventsQuery = await firestore
+            .collection('events')
+            .where('user_id', '==', firebase_uid)
+            .get();
+
+          const todayEvents = eventsQuery.docs.filter(d =>
+            (d.data().occurred_at || '').startsWith(today)
+          );
+
+          if (todayEvents.length === 0) {
+            // Verificar si lleva más de 2 días inactivo
+            if (!eventsQuery.empty) {
+              const lastEventDate = eventsQuery.docs
+                .map(d => (d.data().occurred_at || '').slice(0, 10))
+                .sort()
+                .reverse()[0];
+
+              if (lastEventDate && lastEventDate < twoDaysAgo) {
+                console.log(`😴 Inactividad → ${firebase_uid} (último: ${lastEventDate})`);
+                await sendPushToUser(
+                  firebase_uid,
+                  'ContaBot te extraña 💙',
+                  'Llevas más de 2 días sin registrar movimientos. ¡Mantén el control!',
+                  { action: 'open_home' }
+                );
+                results.notified++;
+                continue;
+              }
+            }
+
+            // Si no hay inactividad, enviar recordatorio diario normal
+            console.log(`📅 Recordatorio diario → ${firebase_uid}`);
+            await sendPushToUser(
+              firebase_uid,
+              '¡Hola! 👋',
+              '¿Ya registraste tus movimientos de hoy? Solo toma unos segundos.',
+              { action: 'open_home' }
+            );
+            results.notified++;
+          } else {
+            console.log(`✅ Skipped → ${firebase_uid} (ya registró hoy)`);
+            results.skipped++;
+          }
+
+          // Verificar metas próximas a vencer (independiente de si registró hoy)
+          const goalsQuery = await firestore
+            .collection('goals')
+            .where('user_id', '==', firebase_uid)
+            .get();
+
+          for (const goalDoc of goalsQuery.docs) {
+            const goal = goalDoc.data();
+            if (!goal.deadline || goal.completed) continue;
+
+            const deadline = new Date(goal.deadline);
+            const daysLeft = Math.ceil(
+              (deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
+            );
+
+            if (daysLeft === 7 || daysLeft === 3 || daysLeft === 1) {
+              const emoji = goal.emoji || '🎯';
+              const dayText = daysLeft === 1 
+                ? '¡mañana es el último día!' 
+                : `faltan ${daysLeft} días`;
+              await sendPushToUser(
+                firebase_uid,
+                `${emoji} Meta: ${goal.name}`,
+                `${dayText.charAt(0).toUpperCase() + dayText.slice(1)} para alcanzar tu meta.`,
+                { action: 'open_goals' }
+              );
+            }
+          }
+
+        } catch (e) {
+          console.error('Error procesando usuario', firebase_uid, e);
+          results.errors++;
+        }
+      }
+
+      console.log('🔔 Resultado notificaciones:', results);
+      res.json({ success: true, results });
+
+    } catch (err) {
+      console.error('Error en trigger-daily:', err);
+      res.status(500).json({ error: 'Error interno' });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -1530,6 +1811,117 @@ async function startServer() {
       }
     });
   }
+
+  // ─── PUSH NOTIFICATIONS CRON JOBS ───────────────────────────────
+
+  // Recordatorio diario — cada día a las 9pm hora México (UTC-6 = 03:00 UTC)
+  // Se ejecuta cada hora para detectar usuarios inactivos y recordarlos
+  setInterval(async () => {
+    const now = new Date();
+    const hourUTC = now.getUTCHours();
+    const minuteUTC = now.getUTCMinutes();
+    
+    // Ejecutar a las 03:00 UTC (9pm México)
+    if (hourUTC !== 3 || minuteUTC > 5) return;
+    
+    try {
+      const subs = db.prepare('SELECT firebase_uid FROM push_subscriptions').all() as { firebase_uid: string }[];
+      
+      for (const { firebase_uid } of subs) {
+        try {
+          // Verificar si el usuario registró movimientos hoy
+          const today = new Date().toISOString().slice(0, 10);
+          const userDoc = await firestore.collection('users').doc(firebase_uid).get();
+          if (!userDoc.exists) continue;
+          
+          const eventsQuery = await firestore.collection('events')
+            .where('user_id', '==', firebase_uid)
+            .get();
+          
+          const todayEvents = eventsQuery.docs.filter(doc => {
+            const d = doc.data().occurred_at || '';
+            return d.startsWith(today);
+          });
+          
+          if (todayEvents.length === 0) {
+            await sendPushToUser(
+              firebase_uid,
+              '¡Hola! 👋',
+              '¿Ya registraste tus movimientos de hoy? Solo toma unos segundos.',
+              { action: 'open_home' }
+            );
+          }
+          
+          // Verificar metas próximas a vencer (en los próximos 7 días)
+          const goalsQuery = await firestore.collection('goals')
+            .where('user_id', '==', firebase_uid)
+            .get();
+          
+          for (const goalDoc of goalsQuery.docs) {
+            const goal = goalDoc.data();
+            if (!goal.deadline || goal.completed) continue;
+            
+            const deadline = new Date(goal.deadline);
+            const daysLeft = Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+            
+            if (daysLeft === 7 || daysLeft === 3 || daysLeft === 1) {
+              const emoji = goal.emoji || '🎯';
+              const dayText = daysLeft === 1 ? '¡mañana es el último día!' : `faltan ${daysLeft} días`;
+              await sendPushToUser(
+                firebase_uid,
+                `${emoji} Meta: ${goal.name}`,
+                `${dayText.charAt(0).toUpperCase() + dayText.slice(1)} para alcanzar tu meta.`,
+                { action: 'open_goals' }
+              );
+            }
+          }
+          
+        } catch (e) {
+          console.error('Error en cron push para usuario', firebase_uid, e);
+        }
+      }
+    } catch (err) {
+      console.error('Error en cron de notificaciones diarias:', err);
+    }
+  }, 60 * 60 * 1000); // cada hora
+
+  // Recordatorio de inactividad — revisar cada 24 horas
+  setInterval(async () => {
+    try {
+      const subs = db.prepare('SELECT firebase_uid FROM push_subscriptions').all() as { firebase_uid: string }[];
+      const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+      
+      for (const { firebase_uid } of subs) {
+        try {
+          const eventsQuery = await firestore.collection('events')
+            .where('user_id', '==', firebase_uid)
+            .get();
+          
+          if (eventsQuery.empty) continue;
+          
+          const lastEvent = eventsQuery.docs
+            .map(d => d.data().occurred_at || '')
+            .sort()
+            .reverse()[0];
+          
+          if (lastEvent < twoDaysAgo) {
+            await sendPushToUser(
+              firebase_uid,
+              'ContaBot te extraña 💙',
+              'Llevas 2 días sin registrar movimientos. ¡Mantén el control!',
+              { action: 'open_home' }
+            );
+          }
+        } catch (e) {
+          console.error('Error en cron inactividad para usuario', firebase_uid, e);
+        }
+      }
+    } catch (err) {
+      console.error('Error en cron de inactividad:', err);
+    }
+  }, 24 * 60 * 60 * 1000); // cada 24 horas
+
+  // ─── FIN CRON JOBS ───────────────────────────────────────────────
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);

@@ -50,7 +50,8 @@ import {
   Sparkles,
   Clock,
   RefreshCw,
-  Download
+  Download,
+  Bell
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
@@ -100,7 +101,8 @@ import {
   setDoc,
   getDoc,
   onSnapshot,
-  Timestamp
+  Timestamp,
+  writeBatch
 } from 'firebase/firestore';
 import { processMultimodalInput, GeminiContext, safeJsonStringify } from './services/geminiService';
 import PlanesView from './components/PlanesView';
@@ -291,11 +293,29 @@ service cloud.firestore {
   const [editingEvent, setEditingEvent] = useState<any>(null);
   const [proposal, setProposal] = useState<GeminiResponse | null>(null);
   const [recentEvents, setRecentEvents] = useState<any[]>([]);
+  const [hasMoreEvents, setHasMoreEvents] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [eventsPage, setEventsPage] = useState(1);
+  const EVENTS_PER_PAGE = 100;
   const [summary, setSummary] = useState<any>({ balance: 0, expenses: 0, debts: 0, loans: 0 });
   const [analytics, setAnalytics] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isPremium, setIsPremium] = useState<boolean | null>(null);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>('default');
+  const [isPushEnabled, setIsPushEnabled] = useState(false);
+  const [isTogglingPush, setIsTogglingPush] = useState(false);
+  const [userCategories, setUserCategories] = useState<string[]>([]);
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  const [editingCategoryValue, setEditingCategoryValue] = useState('');
+  const [showReassignModal, setShowReassignModal] = useState(false);
+  const [categoryToDelete, setCategoryToDelete] = useState<string | null>(null);
+  const [reassignTarget, setReassignTarget] = useState<string>('');
+  const [isCreatingReassignCategory, setIsCreatingReassignCategory] = useState(false);
+  const [newReassignCategoryName, setNewReassignCategoryName] = useState('');
+  const [isProcessingDelete, setIsProcessingDelete] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetStep, setResetStep] = useState<1 | 2 | 3>(1);
   const [resetConfirmText, setResetConfirmText] = useState('');
@@ -696,6 +716,262 @@ service cloud.firestore {
     checkApiKey();
   }, []);
 
+  const urlBase64ToUint8Array = (base64String: string) => {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  };
+
+  const enablePushNotifications = async () => {
+    if (!user?.uid || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    setIsTogglingPush(true);
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      
+      if (permission !== 'granted') {
+        setError('Permiso denegado. Actívalo en la configuración del navegador.');
+        return;
+      }
+
+      const registration = await navigator.serviceWorker.ready;
+      const vapidResponse = await fetch('/api/notifications/vapid-key');
+      if (!vapidResponse.ok) {
+        setError('Error de configuración: no se pudo obtener la VAPID key.');
+        return;
+      }
+      const { publicKey: vapidKey } = await vapidResponse.json();
+      
+      if (!vapidKey) {
+        setError('Error de configuración: VAPID key no disponible.');
+        return;
+      }
+
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidKey)
+      });
+
+      const response = await fetch('/api/notifications/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firebase_uid: user.uid,
+          subscription: subscription.toJSON()
+        })
+      });
+
+      if (response.ok) {
+        setIsPushEnabled(true);
+        setSuccess('¡Notificaciones activadas! Te avisaremos sobre tus metas y movimientos. 🔔');
+        setTimeout(() => setSuccess(null), 4000);
+      } else {
+        throw new Error('Error al guardar suscripción en el servidor');
+      }
+    } catch (err: any) {
+      console.error('Error activando push:', err);
+      setError('No se pudieron activar las notificaciones. Intenta de nuevo.');
+    } finally {
+      setIsTogglingPush(false);
+    }
+  };
+
+  const disablePushNotifications = async () => {
+    if (!user?.uid || !('serviceWorker' in navigator)) return;
+    setIsTogglingPush(true);
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) await subscription.unsubscribe();
+
+      await fetch('/api/notifications/subscribe', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firebase_uid: user.uid })
+      });
+
+      setIsPushEnabled(false);
+      setSuccess('Notificaciones desactivadas.');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      console.error('Error desactivando push:', err);
+      setError('Error al desactivar notificaciones.');
+    } finally {
+      setIsTogglingPush(false);
+    }
+  };
+
+  const loadUserCategories = async (uid: string) => {
+    try {
+      const userRef = doc(db, 'users', uid);
+      const userSnap = await getDoc(userRef);
+      const firestoreCategories: string[] = 
+        userSnap.exists() ? (userSnap.data().categories || []) : [];
+
+      // Rescatar categorías de todos los eventos históricos
+      const eventsSnap = await getDocs(
+        query(collection(db, 'events'), where('user_id', '==', uid))
+      );
+      const eventCategories = Array.from(new Set(
+        eventsSnap.docs
+          .map(d => d.data().category)
+          .filter(Boolean)
+      ));
+
+      const merged = Array.from(new Set([
+        ...firestoreCategories,
+        ...eventCategories
+      ])).sort();
+
+      setUserCategories(merged);
+
+      // Persistir en Firestore si había categorías no guardadas
+      if (eventCategories.some(c => !firestoreCategories.includes(c))) {
+        await setDoc(userRef, { categories: merged }, { merge: true });
+      }
+    } catch (err) {
+      console.error("Error loading categories:", err);
+    }
+  };
+
+  const handleAddCategory = async () => {
+    if (!newCategoryName.trim() || !user?.uid) return;
+    const capitalized = newCategoryName.trim().charAt(0).toUpperCase() + 
+                        newCategoryName.trim().slice(1);
+    if (userCategories.includes(capitalized)) {
+      setError('Esta categoría ya existe');
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      const updated = [...userCategories, capitalized].sort();
+      await setDoc(doc(db, 'users', user.uid), 
+        { categories: updated }, { merge: true });
+      setUserCategories(updated);
+      setNewCategoryName('');
+      setIsAddingCategory(false);
+      setSuccess('Categoría agregada');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError('Error al agregar la categoría');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleRenameCategory = async () => {
+    if (!editingCategory || !editingCategoryValue.trim() || !user?.uid) return;
+    const newName = editingCategoryValue.trim().charAt(0).toUpperCase() + 
+                    editingCategoryValue.trim().slice(1);
+    if (newName === editingCategory) { setEditingCategory(null); return; }
+    setIsProcessing(true);
+    try {
+      const updated = userCategories
+        .map(c => c === editingCategory ? newName : c).sort();
+      await setDoc(doc(db, 'users', user.uid), 
+        { categories: updated }, { merge: true });
+      
+      const q = query(
+        collection(db, 'events'),
+        where('user_id', '==', user.uid),
+        where('category', '==', editingCategory)
+      );
+      const snapshot = await getDocs(q);
+      if (!snapshot.empty) {
+        const batch = writeBatch(db);
+        snapshot.docs.forEach(d => {
+          batch.update(doc(db, 'events', d.id), { category: newName });
+        });
+        await batch.commit();
+      }
+      setUserCategories(updated);
+      setEditingCategory(null);
+      setEditingCategoryValue('');
+      setSuccess(`Categoría renombrada en ${snapshot.size} movimientos`);
+      setTimeout(() => setSuccess(null), 4000);
+      await fetchData();
+    } catch (err) {
+      setError('Error al renombrar la categoría');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleDeleteCategory = (categoryName: string) => {
+    setCategoryToDelete(categoryName);
+    setReassignTarget('');
+    setIsCreatingReassignCategory(false);
+    setNewReassignCategoryName('');
+    setShowReassignModal(true);
+  };
+
+  const executeDeleteWithReassign = async () => {
+    if (!categoryToDelete || !user?.uid) return;
+    
+    let targetCategory = reassignTarget;
+    if (isCreatingReassignCategory) {
+      if (!newReassignCategoryName.trim()) {
+        setError('Escribe el nombre de la nueva categoría');
+        return;
+      }
+      targetCategory = newReassignCategoryName.trim().charAt(0).toUpperCase() + 
+                       newReassignCategoryName.trim().slice(1);
+    }
+    if (!targetCategory) {
+      setError('Selecciona o crea una categoría destino');
+      return;
+    }
+
+    setIsProcessingDelete(true);
+    try {
+      const q = query(
+        collection(db, 'events'),
+        where('user_id', '==', user.uid),
+        where('category', '==', categoryToDelete)
+      );
+      const snapshot = await getDocs(q);
+
+      if (!snapshot.empty) {
+        const batch = writeBatch(db);
+        snapshot.docs.forEach(d => {
+          batch.update(doc(db, 'events', d.id), { category: targetCategory });
+        });
+        await batch.commit();
+      }
+
+      let updated = userCategories.filter(c => c !== categoryToDelete);
+      if (!updated.includes(targetCategory)) {
+        updated = [...updated, targetCategory].sort();
+      }
+      await setDoc(doc(db, 'users', user.uid), 
+        { categories: updated }, { merge: true });
+
+      setUserCategories(updated);
+      setShowReassignModal(false);
+      setCategoryToDelete(null);
+      setReassignTarget('');
+      setIsCreatingReassignCategory(false);
+      setNewReassignCategoryName('');
+
+      const msg = snapshot.empty 
+        ? 'Categoría eliminada' 
+        : `Categoría eliminada y ${snapshot.size} movimiento${snapshot.size !== 1 ? 's' : ''} reasignado${snapshot.size !== 1 ? 's' : ''} a "${targetCategory}"`;
+      setSuccess(msg);
+      setTimeout(() => setSuccess(null), 4000);
+      await fetchData();
+    } catch (err) {
+      console.error("Error eliminando categoría:", err);
+      setError('Error al eliminar la categoría');
+    } finally {
+      setIsProcessingDelete(false);
+    }
+  };
+
   const loadUsageCounters = async (uid: string) => {
     try {
       const userRef = doc(db, 'users', uid);
@@ -788,9 +1064,11 @@ service cloud.firestore {
         const month = getActiveChatMonth();
         loadAiChat(user.uid, month);
       }
+      setEventsPage(1);
       fetchData();
       checkSubscription();
       if (user?.uid) loadUsageCounters(user.uid);
+      if (user?.uid) loadUserCategories(user.uid);
     }
 
     // Verificar si venimos de un pago exitoso
@@ -819,6 +1097,15 @@ service cloud.firestore {
       setTimeout(checkSubscription, 5000);
     }
   }, [user?.id, dateRange]);
+
+  useEffect(() => {
+    if (!('Notification' in window)) {
+      setNotificationPermission('unsupported');
+      return;
+    }
+    setNotificationPermission(Notification.permission);
+    setIsPushEnabled(Notification.permission === 'granted');
+  }, []);
 
   useEffect(() => {
     if (showAd && !isPremium) {
@@ -1775,7 +2062,11 @@ service cloud.firestore {
         })
         .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
       
-      setRecentEvents(events);
+      // Paginar los eventos de la vista (máximo EVENTS_PER_PAGE)
+      const paginatedEvents = events.slice(0, EVENTS_PER_PAGE);
+      setRecentEvents(paginatedEvents);
+      setHasMoreEvents(events.length > EVENTS_PER_PAGE);
+      setEventsPage(1);
       setError(null);
 
       // Calculate summary and analytics
@@ -1810,16 +2101,38 @@ service cloud.firestore {
         return normalized.charAt(0).toUpperCase() + normalized.slice(1);
       };
 
+      const knownCreditors = new Set<string>();
+      allEvents.forEach(e => {
+        if (e.kind === 'debt_increase') {
+          let name = (!['Efectivo', 'Cash', 'cash', 'efectivo', 'Debit Card', 'Débito'].some(c => e.account_name?.toLowerCase().includes(c.toLowerCase()))) 
+            ? e.account_name 
+            : (e.merchant_name || e.description || 'Deuda');
+          let nameStr = normalizeDebtName(String(name));
+          if (nameStr) knownCreditors.add(nameStr);
+        }
+      });
+
+      const knownDebtors = new Set<string>();
+      allEvents.forEach(e => {
+        if (e.kind === 'loan_given') {
+          let nameStr = normalizeLoanName(String(e.merchant_name || e.description || 'Préstamo'));
+          if (nameStr) knownDebtors.add(nameStr);
+        }
+      });
+
       // Count occurrences of group_ids to identify real linked pairs
       // and pre-process groups to find which types exist in each group for ALL events
       const groupCounts: Record<string, number> = {};
       const allGroupTypes: Record<string, string[]> = {};
+      const allGroupAccounts: Record<string, string[]> = {};
       
       allEvents.forEach(e => {
         if (e.group_id) {
           groupCounts[e.group_id] = (groupCounts[e.group_id] || 0) + 1;
           if (!allGroupTypes[e.group_id]) allGroupTypes[e.group_id] = [];
           allGroupTypes[e.group_id].push(e.kind);
+          if (!allGroupAccounts[e.group_id]) allGroupAccounts[e.group_id] = [];
+          if (e.account_name) allGroupAccounts[e.group_id].push(e.account_name);
         }
       });
 
@@ -1920,6 +2233,35 @@ service cloud.firestore {
           if (localDate <= end) {
             debtsByCounterparty[nameStr] = (debtsByCounterparty[nameStr] || 0) + value;
           }
+        } else if (kind === 'expense' && event.category && ['tarjeta de crédito', 'tarjeta de credito', 'deudas', 'deuda', 'pago de tarjeta'].some(c => event.category?.toLowerCase().includes(c))) {
+          // Fallback seguro: Si la IA registró un pago de tarjeta como un simple 'expense' en lugar de 'debt_payment'
+          let creditorName = normalizeDebtName(String(event.merchant_name || event.description));
+          if (creditorName && knownCreditors.has(creditorName)) {
+            const groupKinds = event.group_id ? allGroupTypes[event.group_id] : [];
+            if (!groupKinds.includes('debt_payment')) {
+               if (localDate <= end) {
+                 debtsByCounterparty[creditorName] = (debtsByCounterparty[creditorName] || 0) - amount;
+               }
+            }
+          }
+        } else if (kind === 'income' && event.group_id && allGroupTypes[event.group_id]?.includes('expense')) {
+          // Fallback seguro: Si la IA registró un pago de tarjeta como una transferencia (expense + income)
+          const accountsInGroup = allGroupAccounts[event.group_id] || [];
+          const sourceAccount = accountsInGroup.find(a => a !== event.account_name);
+          const destNameStr = normalizeDebtName(String(event.account_name));
+          const sourceNameStr = sourceAccount ? normalizeDebtName(String(sourceAccount)) : null;
+          
+          const isDestCreditCard = String(event.account_name).toLowerCase().includes('crédito') || String(event.account_name).toLowerCase().includes('tarjeta');
+          const isSameBankTransfer = sourceNameStr === destNameStr;
+
+          if ((isDestCreditCard || isSameBankTransfer) && knownCreditors.has(destNameStr)) {
+            const groupKinds = allGroupTypes[event.group_id] || [];
+            if (!groupKinds.includes('debt_payment')) {
+               if (localDate <= end) {
+                 debtsByCounterparty[destNameStr] = (debtsByCounterparty[destNameStr] || 0) - amount;
+               }
+            }
+          }
         }
 
         // Loans Logic (Cumulative Historical for Charts)
@@ -1930,6 +2272,20 @@ service cloud.firestore {
           const value = kind === 'loan_given' ? amount : -amount;
           if (localDate <= end) {
             loansByDebtor[nameStr] = (loansByDebtor[nameStr] || 0) + value;
+          }
+        } else if (event.category && ['préstamo', 'prestamo'].some(c => event.category?.toLowerCase().includes(c))) {
+          let debtorName = normalizeLoanName(String(event.merchant_name || event.description));
+          if (debtorName && knownDebtors.has(debtorName)) {
+            const groupKinds = event.group_id ? allGroupTypes[event.group_id] : [];
+            if (kind === 'expense' && !groupKinds.includes('loan_given')) {
+               if (localDate <= end) {
+                 loansByDebtor[debtorName] = (loansByDebtor[debtorName] || 0) + amount;
+               }
+            } else if (kind === 'income' && !groupKinds.includes('loan_repayment_received')) {
+               if (localDate <= end) {
+                 loansByDebtor[debtorName] = (loansByDebtor[debtorName] || 0) - amount;
+               }
+            }
           }
         }
       });
@@ -2081,6 +2437,50 @@ service cloud.firestore {
     } catch (err: any) {
       console.error("Firestore error in fetchData:", err);
       setError(getFriendlyErrorMessage(err));
+    }
+  };
+
+  const loadMoreEvents = async () => {
+    if (!user?.id || isLoadingMore || !hasMoreEvents) return;
+    setIsLoadingMore(true);
+    try {
+      const { start, end } = dateRange;
+      
+      const toLocalISO = (dateStr: string) => {
+        if (!dateStr) return new Date().toISOString();
+        if (dateStr.length === 10) return `${dateStr}T12:00:00`;
+        const d = new Date(dateStr);
+        const offset = d.getTimezoneOffset() * 60000;
+        return new Date(d.getTime() - offset).toISOString().slice(0, 23);
+      };
+
+      const q = query(
+        collection(db, 'events'),
+        where('user_id', '==', user.id)
+      );
+      const querySnapshot = await getDocs(q);
+      
+      const allEvents: any[] = [];
+      querySnapshot.forEach((doc: any) => {
+        allEvents.push({ id: doc.id, ...doc.data() });
+      });
+
+      const filtered = allEvents
+        .filter(e => {
+          const localDate = toLocalISO(e.occurred_at);
+          return localDate >= start && localDate <= end;
+        })
+        .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
+
+      const nextPage = eventsPage + 1;
+      const paginated = filtered.slice(0, nextPage * EVENTS_PER_PAGE);
+      setRecentEvents(paginated);
+      setHasMoreEvents(filtered.length > nextPage * EVENTS_PER_PAGE);
+      setEventsPage(nextPage);
+    } catch (err) {
+      console.error("Error loading more events:", err);
+    } finally {
+      setIsLoadingMore(false);
     }
   };
 
@@ -2716,9 +3116,11 @@ service cloud.firestore {
           .map(name => ({ name, type: name.toLowerCase().includes('crédito') || name.toLowerCase().includes('card') ? 'credit_card' : 'other' }));
       }
 
-      const existingCategories = recentEvents.slice(0, 50)
-        .map(e => e.category)
-        .filter((v, i, a) => v && a.indexOf(v) === i);
+      const existingCategories = userCategories.length > 0 
+        ? userCategories 
+        : recentEvents.slice(0, 50)
+            .map((e: any) => e.category)
+            .filter((v: any, i: number, a: any[]) => v && a.indexOf(v) === i);
 
       const knownCounterparties = [
         ...recentEvents.slice(0, 50).map(e => e.merchant_name),
@@ -3171,13 +3573,42 @@ service cloud.firestore {
           }
         }
         
-        // Save all events (either just primary, or primary + linked)
-        for (const ev of eventsToSave) {
-          await addDoc(collection(db, 'events'), ev);
+        // Save all events atomically using writeBatch
+        if (eventsToSave.length === 1) {
+          await addDoc(collection(db, 'events'), eventsToSave[0]);
+        } else {
+          const batch = writeBatch(db);
+          eventsToSave.forEach(ev => {
+            const newDocRef = doc(collection(db, 'events'));
+            batch.set(newDocRef, ev);
+          });
+          await batch.commit();
+        }
+        
+        // Auto-sync: agregar categoría nueva a la lista maestra
+        const newEventCategory = eventsToSave?.[0]?.category;
+        if (newEventCategory && user?.uid && 
+            !userCategories.includes(newEventCategory)) {
+          const updatedCats = [...userCategories, newEventCategory].sort();
+          setUserCategories(updatedCats);
+          setDoc(
+            doc(db, 'users', user.uid),
+            { categories: updatedCats },
+            { merge: true }
+          ).catch(e => console.error("Error auto-sync categoría:", e));
         }
         
         // Refresh data immediately to show the saved event
         await fetchData();
+
+        // Verificar si alguna meta fue completada
+        if (user?.uid) {
+          fetch('/api/notifications/check-goals', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ firebase_uid: user.uid })
+          }).catch(e => console.error('Error checking goals:', e));
+        }
 
         // Remove the linked proposal from pending_proposals if it exists
         let remainingProposals = proposal.pending_proposals || [];
@@ -4654,6 +5085,21 @@ service cloud.firestore {
       </motion.div>
     )}
   </AnimatePresence>
+  {hasMoreEvents && (
+    <div className="flex justify-center pt-2">
+      <button
+        onClick={loadMoreEvents}
+        disabled={isLoadingMore}
+        className="flex items-center gap-2 px-6 py-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-sm font-bold text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all shadow-sm disabled:opacity-50"
+      >
+        {isLoadingMore 
+          ? <Loader2 size={16} className="animate-spin" />
+          : <ChevronDown size={16} />
+        }
+        {isLoadingMore ? 'Cargando...' : 'Ver más movimientos'}
+      </button>
+    </div>
+  )}
 </div>
 </div>
   );
@@ -5968,6 +6414,131 @@ service cloud.firestore {
         )}
       </motion.div>
 
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }} 
+        animate={{ opacity: 1, y: 0 }} 
+        transition={{ delay: 0.15 }} 
+        className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none mb-6"
+      >
+        <div className="flex items-center justify-between mb-8">
+          <h3 className="text-xl font-bold dark:text-white">Categorías</h3>
+          {!isAddingCategory && (
+            <button
+              onClick={() => { setNewCategoryName(''); setIsAddingCategory(true); }}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl font-bold hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-all text-sm"
+            >
+              <Plus size={16} /> Agregar
+            </button>
+          )}
+        </div>
+
+        {isAddingCategory && (
+          <div className="flex gap-2 mb-6 p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl">
+            <input
+              type="text"
+              value={newCategoryName}
+              onChange={(e) => setNewCategoryName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAddCategory(); }}
+              placeholder="Nombre de la categoría"
+              className="flex-1 px-4 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white text-sm"
+              autoFocus
+            />
+            <button
+              onClick={handleAddCategory}
+              disabled={isProcessing || !newCategoryName.trim()}
+              className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all disabled:opacity-50 text-sm flex items-center gap-1"
+            >
+              {isProcessing 
+                ? <Loader2 size={14} className="animate-spin" /> 
+                : <Check size={14} />
+              }
+              Guardar
+            </button>
+            <button
+              onClick={() => { setIsAddingCategory(false); setNewCategoryName(''); }}
+              className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-xl font-bold hover:bg-gray-300 dark:hover:bg-gray-600 transition-all text-sm"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
+        {userCategories.length === 0 ? (
+          <div className="text-center py-8 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700">
+            <p className="text-gray-500 dark:text-gray-400 mb-1">
+              No hay categorías todavía
+            </p>
+            <p className="text-xs text-gray-400">
+              ContaBot las crea automáticamente cuando registras movimientos
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {userCategories.map((category) => (
+              <div
+                key={category}
+                className="p-3 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 flex items-center justify-between group"
+              >
+                {editingCategory === category ? (
+                  <div className="flex gap-2 flex-1">
+                    <input
+                      type="text"
+                      value={editingCategoryValue}
+                      onChange={(e) => setEditingCategoryValue(e.target.value)}
+                      onKeyDown={(e) => { 
+                        if (e.key === 'Enter') handleRenameCategory(); 
+                        if (e.key === 'Escape') setEditingCategory(null); 
+                      }}
+                      className="flex-1 px-3 py-1 bg-white dark:bg-gray-800 border border-emerald-500 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white text-sm"
+                      autoFocus
+                    />
+                    <button
+                      onClick={handleRenameCategory}
+                      disabled={isProcessing}
+                      className="p-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all"
+                    >
+                      {isProcessing 
+                        ? <Loader2 size={12} className="animate-spin" /> 
+                        : <Check size={12} />
+                      }
+                    </button>
+                    <button
+                      onClick={() => setEditingCategory(null)}
+                      className="p-1.5 bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg transition-all"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <span className="text-sm font-medium dark:text-white">
+                      {category}
+                    </span>
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => {
+                          setEditingCategory(category);
+                          setEditingCategoryValue(category);
+                        }}
+                        className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg transition-all"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteCategory(category)}
+                        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-all"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </motion.div>
+
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
         <h3 className="text-xl font-bold mb-8 dark:text-white">Preferencias</h3>
         
@@ -5995,6 +6566,48 @@ service cloud.firestore {
               )} />
             </button>
           </div>
+
+          {notificationPermission !== 'unsupported' && (
+            <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-xl">
+                  <Bell className="text-blue-500" size={20} />
+                </div>
+                <div>
+                  <p className="font-bold dark:text-white">Notificaciones</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {notificationPermission === 'denied'
+                      ? 'Bloqueadas en el navegador'
+                      : isPushEnabled
+                      ? 'Activadas — metas, deudas y recordatorios'
+                      : 'Recibe alertas de tus metas y finanzas'}
+                  </p>
+                </div>
+              </div>
+              {notificationPermission === 'denied' ? (
+                <span className="text-xs text-red-400 font-medium">Bloqueadas</span>
+              ) : (
+                <button
+                  onClick={isPushEnabled ? disablePushNotifications : enablePushNotifications}
+                  disabled={isTogglingPush}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none",
+                    isPushEnabled ? "bg-emerald-500" : "bg-gray-300 dark:bg-gray-600",
+                    isTogglingPush && "opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  {isTogglingPush ? (
+                    <Loader2 size={12} className="animate-spin text-white mx-auto" />
+                  ) : (
+                    <span className={cn(
+                      "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
+                      isPushEnabled ? "translate-x-6" : "translate-x-1"
+                    )} />
+                  )}
+                </button>
+              )}
+            </div>
+          )}
 
           <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl">
             <div className="flex items-center gap-4">
@@ -7276,6 +7889,130 @@ service cloud.firestore {
                     </div>
                   </div>
                 )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {showReassignModal && categoryToDelete && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-white dark:bg-gray-900 w-full max-w-md rounded-[2.5rem] overflow-hidden shadow-2xl border border-gray-100 dark:border-gray-800"
+            >
+              <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-bold dark:text-white">
+                    Eliminar "{categoryToDelete}"
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    ¿A qué categoría mover los movimientos?
+                  </p>
+                </div>
+                <button 
+                  onClick={() => {
+                    setShowReassignModal(false);
+                    setCategoryToDelete(null);
+                  }}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-all"
+                >
+                  <X size={20} className="text-gray-400" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-3 max-h-[50vh] overflow-y-auto">
+                {userCategories
+                  .filter(c => c !== categoryToDelete)
+                  .map(category => (
+                    <button
+                      key={category}
+                      onClick={() => {
+                        setReassignTarget(category);
+                        setIsCreatingReassignCategory(false);
+                        setNewReassignCategoryName('');
+                      }}
+                      className={cn(
+                        "w-full p-3 rounded-2xl border-2 text-left font-medium transition-all text-sm",
+                        reassignTarget === category && !isCreatingReassignCategory
+                          ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400"
+                          : "border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800 dark:text-white hover:border-emerald-300 dark:hover:border-emerald-700"
+                      )}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span>{category}</span>
+                        {reassignTarget === category && !isCreatingReassignCategory && (
+                          <Check size={16} className="text-emerald-500" />
+                        )}
+                      </div>
+                    </button>
+                  ))
+                }
+
+                <button
+                  onClick={() => {
+                    setIsCreatingReassignCategory(true);
+                    setReassignTarget('');
+                  }}
+                  className={cn(
+                    "w-full p-3 rounded-2xl border-2 text-left font-medium transition-all text-sm",
+                    isCreatingReassignCategory
+                      ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400"
+                      : "border-dashed border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-emerald-300 dark:hover:border-emerald-700"
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <Plus size={16} />
+                    <span>+ Nueva categoría</span>
+                  </div>
+                </button>
+
+                {isCreatingReassignCategory && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="overflow-hidden"
+                  >
+                    <input
+                      type="text"
+                      value={newReassignCategoryName}
+                      onChange={(e) => setNewReassignCategoryName(e.target.value)}
+                      onKeyDown={(e) => { 
+                        if (e.key === 'Enter') executeDeleteWithReassign(); 
+                      }}
+                      placeholder="Nombre de la nueva categoría"
+                      className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border-2 border-emerald-500 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none dark:text-white text-sm"
+                      autoFocus
+                    />
+                  </motion.div>
+                )}
+              </div>
+
+              <div className="p-6 border-t border-gray-100 dark:border-gray-800 flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowReassignModal(false);
+                    setCategoryToDelete(null);
+                  }}
+                  className="flex-1 py-3 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-bold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all text-sm"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={executeDeleteWithReassign}
+                  disabled={
+                    isProcessingDelete || 
+                    (!reassignTarget && !newReassignCategoryName.trim())
+                  }
+                  className="flex-1 py-3 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm shadow-lg shadow-red-500/20"
+                >
+                  {isProcessingDelete 
+                    ? <Loader2 size={16} className="animate-spin" />
+                    : <Trash2 size={16} />
+                  }
+                  Confirmar
+                </button>
               </div>
             </motion.div>
           </div>
