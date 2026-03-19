@@ -6190,39 +6190,52 @@ service cloud.firestore {
         </div>
 
         <div className={cn(
-          "p-5 rounded-2xl flex items-center gap-4 border transition-all",
-          isPremium 
-            ? "bg-emerald-50/50 dark:bg-emerald-900/10 border-emerald-100 dark:border-emerald-900/30" 
+          "rounded-2xl border transition-all overflow-hidden",
+          isPremium
+            ? "bg-emerald-50/50 dark:bg-emerald-900/10 border-emerald-100 dark:border-emerald-900/30"
             : "bg-gray-50 dark:bg-gray-900 border-gray-100 dark:border-gray-800"
         )}>
+          {/* Barra de acento superior */}
           <div className={cn(
-            "p-3 rounded-xl shadow-sm",
-            isPremium ? "bg-emerald-500 text-white" : "bg-gray-200 text-gray-500 dark:bg-gray-800"
-          )}>
-            {isPremium ? <Crown size={24} /> : <UserIcon size={24} />}
+            "h-1 w-full",
+            isPremium ? "bg-emerald-500" : "bg-gray-200 dark:bg-gray-700"
+          )} />
+
+          <div className="p-4 sm:p-5">
+            {/* Fila superior: ícono + nombre del plan */}
+            <div className="flex items-center gap-3 mb-2">
+              <div className={cn(
+                "p-2 rounded-xl shrink-0",
+                isPremium ? "bg-emerald-500 text-white" : "bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400"
+              )}>
+                {isPremium ? <Crown size={18} /> : <UserIcon size={18} />}
+              </div>
+              <p className="font-bold dark:text-white text-base leading-tight">
+                {isPremium === null ? 'Verificando estado...' : (isPremium ? 'Plan Premium Activo' : 'Usuario Estándar')}
+              </p>
+            </div>
+
+            {/* Descripción + botón en la misma fila base, con botón siempre a la derecha */}
+            <div className="flex items-end justify-between gap-3 pl-1">
+              <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed flex-1 min-w-0">
+                {isPremium === null
+                  ? 'Estamos sincronizando tu cuenta con Stripe.'
+                  : (isPremium
+                      ? (premiumUntil
+                          ? `Activa hasta el ${new Date(premiumUntil).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })}`
+                          : 'Tu suscripción Premium está activa.')
+                      : 'Mejora tu plan para desbloquear todas las funciones.')}
+              </p>
+              {!isPremium && (
+                <button
+                  onClick={() => setView('planes')}
+                  className="px-5 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200 dark:shadow-none shrink-0"
+                >
+                  Mejorar
+                </button>
+              )}
+            </div>
           </div>
-          <div className="flex-1">
-            <p className="text-base font-bold dark:text-white">
-              {isPremium === null ? 'Verificando estado...' : (isPremium ? 'Plan Premium Activo' : 'Usuario Estándar')}
-            </p>
-            <p className="text-sm text-gray-500 mt-0.5">
-              {isPremium === null 
-                ? 'Estamos sincronizando tu cuenta con Stripe.'
-                : (isPremium 
-                    ? (premiumUntil 
-                        ? `Tu suscripción está activa hasta el ${new Date(premiumUntil).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })}`
-                        : 'Tu suscripción Premium está activa.')
-                    : 'Disfruta de las funciones básicas o mejora tu plan.')}
-            </p>
-          </div>
-          {!isPremium && (
-            <button 
-              onClick={() => setView('planes')}
-              className="px-6 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200 dark:shadow-none"
-            >
-              Mejorar
-            </button>
-          )}
         </div>
         
         {isPremium && (
@@ -6473,62 +6486,51 @@ service cloud.firestore {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="flex flex-wrap gap-2">
             {userCategories.map((category) => (
               <div
                 key={category}
-                className="p-3 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 flex items-center justify-between group"
+                className="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-full border border-gray-200 dark:border-gray-700 group hover:border-emerald-400 dark:hover:border-emerald-600 transition-all"
               >
+                {/* Punto de color generado a partir del nombre */}
+                <div
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: COLORS[Math.abs(category.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)) % COLORS.length] }}
+                />
+
+                {/* Modo edición o modo lectura */}
                 {editingCategory === category ? (
-                  <div className="flex gap-2 flex-1">
+                  <div className="flex items-center gap-1">
                     <input
                       type="text"
                       value={editingCategoryValue}
                       onChange={(e) => setEditingCategoryValue(e.target.value)}
-                      onKeyDown={(e) => { 
-                        if (e.key === 'Enter') handleRenameCategory(); 
-                        if (e.key === 'Escape') setEditingCategory(null); 
-                      }}
-                      className="flex-1 px-3 py-1 bg-white dark:bg-gray-800 border border-emerald-500 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white text-sm"
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleRenameCategory(); if (e.key === 'Escape') setEditingCategory(null); }}
+                      className="w-24 px-2 py-0.5 bg-white dark:bg-gray-700 border border-emerald-500 rounded-lg text-xs outline-none dark:text-white"
                       autoFocus
                     />
-                    <button
-                      onClick={handleRenameCategory}
-                      disabled={isProcessing}
-                      className="p-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all"
-                    >
-                      {isProcessing 
-                        ? <Loader2 size={12} className="animate-spin" /> 
-                        : <Check size={12} />
-                      }
+                    <button onClick={handleRenameCategory} disabled={isProcessing} className="text-emerald-500 hover:text-emerald-600">
+                      {isProcessing ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
                     </button>
-                    <button
-                      onClick={() => setEditingCategory(null)}
-                      className="p-1.5 bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg transition-all"
-                    >
+                    <button onClick={() => setEditingCategory(null)} className="text-gray-400 hover:text-gray-600">
                       <X size={12} />
                     </button>
                   </div>
                 ) : (
                   <>
-                    <span className="text-sm font-medium dark:text-white">
-                      {category}
-                    </span>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <span className="text-sm font-medium dark:text-white leading-none">{category}</span>
+                    <div className="flex items-center gap-0.5 ml-1">
                       <button
-                        onClick={() => {
-                          setEditingCategory(category);
-                          setEditingCategoryValue(category);
-                        }}
-                        className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg transition-all"
+                        onClick={() => { setEditingCategory(category); setEditingCategoryValue(category); }}
+                        className="p-1 text-gray-400 hover:text-emerald-500 rounded-md hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-all"
                       >
-                        <Pencil size={14} />
+                        <Pencil size={11} />
                       </button>
                       <button
                         onClick={() => handleDeleteCategory(category)}
-                        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-all"
+                        className="p-1 text-gray-400 hover:text-red-500 rounded-md hover:bg-red-50 dark:hover:bg-red-900/30 transition-all"
                       >
-                        <Trash2 size={14} />
+                        <Trash2 size={11} />
                       </button>
                     </div>
                   </>
@@ -6539,24 +6541,24 @@ service cloud.firestore {
         )}
       </motion.div>
 
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bg-white dark:bg-gray-800 p-4 sm:p-6 md:p-8 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
         <h3 className="text-xl font-bold mb-8 dark:text-white">Preferencias</h3>
         
         <div className="space-y-6">
-          <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl">
-            <div className="flex items-center gap-4">
+          <div className="flex items-center justify-between p-3 sm:p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
               <div className="p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
                 {isDarkMode ? <Moon className="text-indigo-400" /> : <Sun className="text-amber-500" />}
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="font-bold dark:text-white">Modo Oscuro</p>
-                <p className="text-xs text-gray-500">Cambia la apariencia de la app</p>
+                <p className="text-xs text-gray-500 line-clamp-2">Cambia la apariencia de la app</p>
               </div>
             </div>
             <button 
               onClick={toggleTheme}
               className={cn(
-                "w-14 h-8 rounded-full transition-all relative",
+                "w-14 h-8 rounded-full transition-all relative flex-shrink-0",
                 isDarkMode ? 'bg-emerald-500' : 'bg-gray-300'
               )}
             >
@@ -6568,14 +6570,14 @@ service cloud.firestore {
           </div>
 
           {notificationPermission !== 'unsupported' && (
-            <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl">
-              <div className="flex items-center gap-4">
+            <div className="flex items-center justify-between p-3 sm:p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
                 <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-xl">
                   <Bell className="text-blue-500" size={20} />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="font-bold dark:text-white">Notificaciones</p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                  <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">
                     {notificationPermission === 'denied'
                       ? 'Bloqueadas en el navegador'
                       : isPushEnabled
@@ -6585,13 +6587,13 @@ service cloud.firestore {
                 </div>
               </div>
               {notificationPermission === 'denied' ? (
-                <span className="text-xs text-red-400 font-medium">Bloqueadas</span>
+                <span className="text-xs text-red-400 font-medium flex-shrink-0">Bloqueadas</span>
               ) : (
                 <button
                   onClick={isPushEnabled ? disablePushNotifications : enablePushNotifications}
                   disabled={isTogglingPush}
                   className={cn(
-                    "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none",
+                    "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none flex-shrink-0",
                     isPushEnabled ? "bg-emerald-500" : "bg-gray-300 dark:bg-gray-600",
                     isTogglingPush && "opacity-50 cursor-not-allowed"
                   )}
@@ -6609,41 +6611,41 @@ service cloud.firestore {
             </div>
           )}
 
-          <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl">
-            <div className="flex items-center gap-4">
+          <div className="flex items-center justify-between p-3 sm:p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
               <div className="p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
                 <LogOut className="text-red-500" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="font-bold dark:text-white">Cerrar Sesión</p>
-                <p className="text-xs text-gray-500">Salir de tu cuenta actual</p>
+                <p className="text-xs text-gray-500 line-clamp-2">Salir de tu cuenta actual</p>
               </div>
             </div>
             <button 
               onClick={logout}
-              className="px-4 py-2 bg-red-50 text-red-600 rounded-xl font-bold hover:bg-red-100 transition-all"
+              className="px-4 py-2 bg-red-50 text-red-600 rounded-xl font-bold hover:bg-red-100 transition-all flex-shrink-0"
             >
               Salir
             </button>
           </div>
 
-          <div className="flex items-center justify-between p-4 bg-red-50 dark:bg-red-900/10 rounded-2xl border border-red-100 dark:border-red-900/30">
-            <div className="flex items-center gap-4">
+          <div className="flex items-center justify-between p-3 sm:p-4 bg-red-50 dark:bg-red-900/10 rounded-2xl border border-red-100 dark:border-red-900/30">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
               <div className="p-3 bg-red-100 dark:bg-red-900/30 rounded-xl">
                 <Shield className="text-red-500" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="font-bold text-red-600 dark:text-red-400">
                   Reinicio de Fábrica
                 </p>
-                <p className="text-xs text-red-400 dark:text-red-500">
+                <p className="text-xs text-red-400 dark:text-red-500 line-clamp-2">
                   Borra todos tus datos permanentemente
                 </p>
               </div>
             </div>
             <button
               onClick={() => setShowResetModal(true)}
-              className="px-4 py-2 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-xl font-bold hover:bg-red-200 dark:hover:bg-red-900/50 transition-all text-sm"
+              className="px-4 py-2 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-xl font-bold hover:bg-red-200 dark:hover:bg-red-900/50 transition-all text-sm flex-shrink-0"
             >
               Reiniciar
             </button>
