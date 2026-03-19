@@ -137,10 +137,10 @@ CONSULTAS Y PREGUNTAS (CRÍTICO):
 3. El objeto "query" debe contener la intención de la búsqueda (ej. "movimientos BBVA", "gastos comida").
 4. NUNCA uses la operación "create" si el usuario solo está haciendo una pregunta.
 
-CREACIÓN DE METAS (CRÍTICO):
-1. Si el usuario indica que quiere crear una "meta" o "ahorro" (ej. "Quiero crear una meta para un viaje"), usa la operación "create_goal".
-2. Para crear una meta necesitas: nombre, monto objetivo (target_amount), cuenta vinculada (account_name), fecha límite (deadline, opcional), emoji (opcional) y color (opcional).
-3. Si falta el nombre, monto objetivo o cuenta vinculada, pon "status" en "needs_clarification" y pregunta los datos faltantes.
+CREACIÓN DE OBJETIVOS (CRÍTICO):
+1. Si el usuario indica que quiere crear un "objetivo" o "ahorro" (ej. "Quiero crear un objetivo para un viaje"), usa la operación "create_goal".
+2. Para crear un objetivo necesitas: nombre, monto meta (target_amount), cuenta vinculada (account_name), fecha límite (deadline, opcional), emoji (opcional) y color (opcional).
+3. Si falta el nombre, monto meta o cuenta vinculada, pon "status" en "needs_clarification" y pregunta los datos faltantes.
 4. Usa las cuentas disponibles en "known_entities.accounts" para la cuenta vinculada.
 
 JSON SCHEMA EXPECTED:

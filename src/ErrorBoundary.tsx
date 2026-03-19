@@ -27,7 +27,7 @@ class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-          <div className="bg-white p-6 rounded-2xl shadow-xl max-w-md w-full text-center">
+          <div className="bg-white p-6 rounded-3xl shadow-xl max-w-md w-full text-center">
             <h2 className="text-xl font-bold text-red-600 mb-2">Algo salió mal</h2>
             <p className="text-gray-600 mb-4 text-sm">La aplicación encontró un error inesperado.</p>
             <pre className="bg-gray-100 p-3 rounded-lg text-xs text-left overflow-auto mb-4 max-h-32">

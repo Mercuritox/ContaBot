@@ -1380,16 +1380,16 @@ service cloud.firestore {
       }
     }
 
-    // Metas
+    // Objetivos
     pdf.addPage();
     yPosition = 20;
     pdf.setTextColor(0, 153, 102);
     pdf.setFontSize(14);
     pdf.setFont('helvetica', 'bold');
-    pdf.text(cleanTextForPDF('Mis Metas de Ahorro'), 15, yPosition);
+    pdf.text(cleanTextForPDF('Mis Objetivos de Ahorro'), 15, yPosition);
     yPosition += 5;
 
-    const metasBody = goals.map(g => {
+    const objetivosBody = goals.map(g => {
       const currentAmount = g.account_name && analytics?.accountBalances
         ? (analytics.accountBalances[g.account_name] || 0)
         : (g.current_amount || 0);
@@ -1406,11 +1406,11 @@ service cloud.firestore {
       ];
     });
 
-    if (metasBody.length > 0) {
+    if (objetivosBody.length > 0) {
       autoTable(pdf, {
         startY: yPosition,
-        head: [[cleanTextForPDF('Meta'), cleanTextForPDF('Objetivo'), cleanTextForPDF('Actual'), cleanTextForPDF('Progreso'), cleanTextForPDF('Cuenta'), cleanTextForPDF('Fecha límite')]],
-        body: metasBody,
+        head: [[cleanTextForPDF('Objetivo'), cleanTextForPDF('Monto Meta'), cleanTextForPDF('Actual'), cleanTextForPDF('Progreso'), cleanTextForPDF('Cuenta'), cleanTextForPDF('Fecha límite')]],
+        body: objetivosBody,
         theme: 'grid',
         headStyles: { fillColor: [0, 153, 102] },
         margin: { left: 15, right: 15 }
@@ -1419,7 +1419,7 @@ service cloud.firestore {
       pdf.setTextColor(150, 150, 150);
       pdf.setFontSize(10);
       pdf.setFont('helvetica', 'italic');
-      pdf.text(cleanTextForPDF('No hay metas registradas'), 15, yPosition + 5);
+      pdf.text(cleanTextForPDF('No hay objetivos registrados'), 15, yPosition + 5);
     }
 
     // Análisis IA
@@ -1598,7 +1598,7 @@ service cloud.firestore {
         gastosPorCategoria: expensesParaAnalisis,
         totalIngresos: summary?.balance || 0,
         totalGastos: summary?.expenses || 0,
-        metasActivas: goals.map(g => {
+        objetivosActivos: goals.map(g => {
           const currentAmount = g.account_name && analytics?.accountBalances
             ? (analytics.accountBalances[g.account_name] || 0)
             : (g.current_amount || 0);
@@ -1626,14 +1626,14 @@ service cloud.firestore {
   2. 📊 RESUMEN DEL MES — breve resumen de ingresos vs gastos
   3. 🔍 GASTOS QUE PUEDES EVITAR — identifica las 2-3 categorías donde más gasta y que son evitables (no incluyas renta, servicios básicos, salud)
   4. 💡 RECOMENDACIONES — para cada gasto evitable, sugiere cuánto podría ahorrarse y qué hacer con ese dinero
-  5. 🎯 CONEXIÓN CON TUS METAS — si el usuario tiene metas activas, menciona cuánto más rápido podría cumplirlas si ahorra lo recomendado. Menciona la meta por nombre y emoji.
+  5. 🎯 CONEXIÓN CON TUS OBJETIVOS — si el usuario tiene objetivos activos, menciona cuánto más rápido podría cumplirlos si ahorra lo recomendado. Menciona el objetivo por nombre e emoji.
   6. Cierra con un párrafo motivador y personalizado, sin título ni encabezado, solo el mensaje directamente.
   
   Sé específico con los números. Si no hay suficientes datos, dilo amablemente y anima al usuario a registrar más movimientos.
   
   IMPORTANTE: Los traspasos entre cuentas propias NO son gastos evitables, 
   son movimientos internos del usuario. NUNCA los menciones como área de mejora.
-  El current_amount de cada meta ya refleja el saldo REAL de la cuenta vinculada, 
+  El current_amount de cada objetivo ya refleja el saldo REAL de la cuenta vinculada, 
   úsalo tal cual para calcular el progreso y las proyecciones.`;
 
       const apiKey = (window as any)._SERVER_GEMINI_API_KEY || (window as any).GEMINI_API_KEY;
@@ -1687,7 +1687,7 @@ service cloud.firestore {
   2. 📊 RESUMEN DEL MES — breve resumen de ingresos vs gastos
   3. 🔍 GASTOS QUE PUEDES EVITAR — identifica las 2-3 categorías donde más gasta y que son evitables (no incluyas renta, servicios básicos, salud)
   4. 💡 RECOMENDACIONES — para cada gasto evitable, sugiere cuánto podría ahorrarse y qué hacer con ese dinero
-  5. 🎯 CONEXIÓN CON TUS METAS — si el usuario tiene metas activas, menciona cuánto más rápido podría cumplirlas si ahorra lo recomendado. Menciona la meta por nombre y emoji.
+  5. 🎯 CONEXIÓN CON TUS OBJETIVOS — si el usuario tiene objetivos activos, menciona cuánto más rápido podría cumplirlos si ahorra lo recomendado. Menciona el objetivo por nombre e emoji.
   6. Cierra con un párrafo motivador y personalizado, sin título ni encabezado, solo el mensaje directamente.
   
   Sé específico con los números. Si no hay suficientes datos, dilo amablemente y anima al usuario a registrar más movimientos.
@@ -1736,10 +1736,10 @@ service cloud.firestore {
     } catch (err: any) {
       console.error("Error fetching goals:", err);
       if (err.message && (err.message.includes('permissions') || err.message.includes('insufficient'))) {
-        setError("Error de permisos al leer Metas. Asegúrate de actualizar las Reglas de Firestore.");
+        setError("Error de permisos al leer Objetivos. Asegúrate de actualizar las Reglas de Firestore.");
       } else if (err.message && err.message.includes('index')) {
         const link = err.message.split(': ').pop();
-        setError(`Falta un índice en Firestore para ordenar las metas. Puedes crearlo aquí: ${link}`);
+        setError(`Falta un índice en Firestore para ordenar los objetivos. Puedes crearlo aquí: ${link}`);
       }
     }
   };
@@ -1759,7 +1759,7 @@ service cloud.firestore {
           ...goalForm,
           updated_at: Timestamp.now()
         });
-        setSuccess('Meta actualizada con éxito');
+        setSuccess('Objetivo actualizado con éxito');
       } else {
         await addDoc(collection(db, 'goals'), {
           ...goalForm,
@@ -1767,14 +1767,14 @@ service cloud.firestore {
           current_amount: goalForm.current_amount || 0,
           created_at: Timestamp.now()
         });
-        setSuccess('Meta creada con éxito');
+        setSuccess('Objetivo creado con éxito');
       }
       setIsAddingGoal(false);
       setGoalForm({ name: '', emoji: '🎯', color: '#10b981', target_amount: 0, current_amount: 0, deadline: '', account_name: '' });
       fetchGoals();
     } catch (err) {
       console.error("Error saving goal:", err);
-      setError('Error al guardar la meta');
+      setError('Error al guardar el objetivo');
     } finally {
       setIsProcessing(false);
     }
@@ -1790,12 +1790,12 @@ service cloud.firestore {
     setIsProcessing(true);
     try {
       await deleteDoc(doc(db, 'goals', isDeletingGoal));
-      setSuccess('Meta eliminada con éxito');
+      setSuccess('Objetivo eliminado con éxito');
       fetchGoals();
       setIsDeletingGoal(null);
     } catch (err) {
       console.error("Error deleting goal:", err);
-      setError('Error al eliminar la meta');
+      setError('Error al eliminar el objetivo');
     } finally {
       setIsProcessing(false);
     }
@@ -2992,7 +2992,7 @@ service cloud.firestore {
 
     if (proposal.operation === 'create_goal' && proposal.result.create_goal?.goal) {
       const goal = proposal.result.create_goal.goal;
-      parts.push(`Meta: ${goal.name}, objetivo ${formatMoney(goal.target_amount || 0)}.`);
+      parts.push(`Objetivo: ${goal.name}, meta ${formatMoney(goal.target_amount || 0)}.`);
     }
 
     // Pregunta de confirmación corta
@@ -3467,7 +3467,7 @@ service cloud.firestore {
         await addDoc(collection(db, 'goals'), newGoal);
         await fetchData();
         setProposal(null);
-        setSuccess("Meta creada con éxito.");
+        setSuccess("Objetivo creado con éxito.");
         setTimeout(() => setSuccess(null), 4000);
         setIsProcessing(false);
         return;
@@ -3891,7 +3891,7 @@ service cloud.firestore {
       >
         <div className="text-center mb-10">
           <img src={APP_LOGO} alt="Logo" className="w-14 h-14 mx-auto mb-6 shadow-lg shadow-emerald-500/20 rounded-2xl object-cover" referrerPolicy="no-referrer" />
-          <h2 className="text-3xl font-black dark:text-white tracking-tight leading-tight">
+          <h2 className="text-2xl sm:text-3xl font-black dark:text-white tracking-tight leading-tight">
             {authMode === 'login' ? '¡Hola de nuevo!' : 'Regístrate para empezar a ahorrar'}
           </h2>
         </div>
@@ -3953,25 +3953,25 @@ service cloud.firestore {
         {authMethod === 'email' ? (
           <form onSubmit={handleAuth} className="space-y-6">
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Correo electrónico</label>
+              <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider ml-1">Correo electrónico</label>
               <input 
                 type="email" 
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="ejemplo@correo.com"
-                className="w-full px-5 py-4 rounded-2xl bg-gray-50 dark:bg-gray-800 border-2 border-transparent focus:border-emerald-500 focus:bg-white dark:focus:bg-gray-900 transition-all outline-none dark:text-white placeholder:text-gray-400"
+                className="w-full px-5 py-4 rounded-xl bg-gray-50 dark:bg-gray-800 border-2 border-transparent focus:border-emerald-500 focus:bg-white dark:focus:bg-gray-900 transition-all outline-none dark:text-white placeholder:text-gray-400"
                 required
               />
             </div>
             
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Contraseña</label>
+              <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider ml-1">Contraseña</label>
               <input 
                 type="password" 
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={authMode === 'login' ? "Tu contraseña" : "Mínimo 8 caracteres"}
-                className="w-full px-5 py-4 rounded-2xl bg-gray-50 dark:bg-gray-800 border-2 border-transparent focus:border-emerald-500 focus:bg-white dark:focus:bg-gray-900 transition-all outline-none dark:text-white placeholder:text-gray-400"
+                className="w-full px-5 py-4 rounded-xl bg-gray-50 dark:bg-gray-800 border-2 border-transparent focus:border-emerald-500 focus:bg-white dark:focus:bg-gray-900 transition-all outline-none dark:text-white placeholder:text-gray-400"
                 required
               />
             </div>
@@ -3988,25 +3988,25 @@ service cloud.firestore {
         ) : (
           <form onSubmit={handleAuth} className="space-y-6">
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Número de teléfono</label>
+              <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider ml-1">Número de teléfono</label>
               <input 
                 type="tel" 
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value)}
                 placeholder="+52 123 456 7890"
-                className="w-full px-5 py-4 rounded-2xl bg-gray-50 dark:bg-gray-800 border-2 border-transparent focus:border-emerald-500 focus:bg-white dark:focus:bg-gray-900 transition-all outline-none dark:text-white placeholder:text-gray-400"
+                className="w-full px-5 py-4 rounded-xl bg-gray-50 dark:bg-gray-800 border-2 border-transparent focus:border-emerald-500 focus:bg-white dark:focus:bg-gray-900 transition-all outline-none dark:text-white placeholder:text-gray-400"
                 required
               />
             </div>
             
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Contraseña</label>
+              <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider ml-1">Contraseña</label>
               <input 
                 type="password" 
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={authMode === 'login' ? "Tu contraseña" : "Mínimo 8 caracteres"}
-                className="w-full px-5 py-4 rounded-2xl bg-gray-50 dark:bg-gray-800 border-2 border-transparent focus:border-emerald-500 focus:bg-white dark:focus:bg-gray-900 transition-all outline-none dark:text-white placeholder:text-gray-400"
+                className="w-full px-5 py-4 rounded-xl bg-gray-50 dark:bg-gray-800 border-2 border-transparent focus:border-emerald-500 focus:bg-white dark:focus:bg-gray-900 transition-all outline-none dark:text-white placeholder:text-gray-400"
                 required
               />
             </div>
@@ -4238,7 +4238,7 @@ service cloud.firestore {
 
     const renderEventList = (eventsToRender: any[], isRecentActivity: boolean = false, isSummaryExpanded: boolean = false) => {
       if (eventsToRender.length === 0) {
-        return <div className="p-12 text-center text-gray-400 italic">No hay movimientos aún.</div>;
+        return <div className="p-12 text-center text-gray-400 italic text-xs sm:text-sm">No hay movimientos aún.</div>;
       }
 
       const getEventColor = (kind: string) => {
@@ -4419,13 +4419,22 @@ service cloud.firestore {
     };
 
     return (
-    <div className="space-y-8">
+    <div className="space-y-5 sm:space-y-6">
+      <div className="bg-emerald-600 rounded-2xl p-5 text-white shadow-lg shadow-emerald-500/20">
+        <p className="text-xs font-medium text-emerald-100 uppercase tracking-wider mb-1">
+          Hola, {user?.username?.split(' ')[0]} 👋
+        </p>
+        <p className="text-3xl font-bold font-mono">
+          ${formatAmount(summary.balance - summary.expenses)}
+        </p>
+        <p className="text-xs text-emerald-200 mt-1">Balance total</p>
+      </div>
       {renderFilterBar()}
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-gray-800 p-4 sm:p-5 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
           <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
               <div className="p-2 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-lg"><ArrowDownLeft size={20} /></div>
               <span className="text-sm font-medium text-gray-500 dark:text-gray-400">Ingresos</span>
             </div>
@@ -4435,7 +4444,7 @@ service cloud.firestore {
               </motion.div>
             </button>
           </div>
-          <p className="text-2xl font-mono font-semibold dark:text-white">${formatAmount(summary.balance)}</p>
+          <p className="text-lg sm:text-2xl font-mono font-semibold dark:text-white">${formatAmount(summary.balance)}</p>
           <AnimatePresence initial={false}>
             {expandedSummary === 'income' && (
               <motion.div 
@@ -4452,9 +4461,9 @@ service cloud.firestore {
             )}
           </AnimatePresence>
         </motion.div>
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="bg-white dark:bg-gray-800 p-4 sm:p-5 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
           <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
               <div className="p-2 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-lg"><ArrowUpRight size={20} /></div>
               <span className="text-sm font-medium text-gray-500 dark:text-gray-400">Salidas</span>
             </div>
@@ -4464,7 +4473,7 @@ service cloud.firestore {
               </motion.div>
             </button>
           </div>
-          <p className="text-2xl font-mono font-semibold dark:text-white">${formatAmount(summary.expenses)}</p>
+          <p className="text-lg sm:text-2xl font-mono font-semibold dark:text-white">${formatAmount(summary.expenses)}</p>
           <AnimatePresence initial={false}>
             {expandedSummary === 'expense' && (
               <motion.div 
@@ -4481,9 +4490,9 @@ service cloud.firestore {
             )}
           </AnimatePresence>
         </motion.div>
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }} className="bg-white dark:bg-gray-800 p-4 sm:p-5 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
           <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
               <div className="p-2 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-lg"><Wallet size={20} /></div>
               <span className="text-sm font-medium text-gray-500 dark:text-gray-400">Deudas</span>
             </div>
@@ -4493,7 +4502,7 @@ service cloud.firestore {
               </motion.div>
             </button>
           </div>
-          <p className="text-2xl font-mono font-semibold dark:text-white">${formatAmount(summary.debts)}</p>
+          <p className="text-lg sm:text-2xl font-mono font-semibold dark:text-white">${formatAmount(summary.debts)}</p>
           <AnimatePresence initial={false}>
             {expandedSummary === 'debt' && (
               <motion.div 
@@ -4510,9 +4519,9 @@ service cloud.firestore {
             )}
           </AnimatePresence>
         </motion.div>
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bg-white dark:bg-gray-800 p-4 sm:p-5 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
           <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
               <div className="p-2 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg"><Banknote size={20} /></div>
               <span className="text-sm font-medium text-gray-500 dark:text-gray-400">Préstamos</span>
             </div>
@@ -4522,7 +4531,7 @@ service cloud.firestore {
               </motion.div>
             </button>
           </div>
-          <p className="text-2xl font-mono font-semibold dark:text-white">${formatAmount(summary.loans)}</p>
+          <p className="text-lg sm:text-2xl font-mono font-semibold dark:text-white">${formatAmount(summary.loans)}</p>
           <AnimatePresence initial={false}>
             {expandedSummary === 'loan' && (
               <motion.div 
@@ -4605,7 +4614,7 @@ service cloud.firestore {
                  proposal?.operation === 'query' ? <Search size={18} /> :
                  proposal?.operation === 'create_goal' ? <Target size={18} /> :
                  <Check size={18} />} 
-                {proposal?.operation === 'query' ? 'Consulta' : proposal?.operation === 'create_goal' ? 'Nueva Meta' : 'Propuesta de Movimiento'} {remainingPendingCount > 0 ? `(Pendientes: ${remainingPendingCount + 1})` : ''}
+                {proposal?.operation === 'query' ? 'Consulta' : proposal?.operation === 'create_goal' ? 'Nuevo Objetivo' : 'Propuesta de Movimiento'} {remainingPendingCount > 0 ? `(Pendientes: ${remainingPendingCount + 1})` : ''}
               </h3>
               <button onClick={() => { setProposal(null); speakText('Entendido, propuesta descartada.'); }} className={cn(
                 "p-1 rounded-full transition-colors",
@@ -4648,7 +4657,7 @@ service cloud.firestore {
                   {proposal?.result?.create?.event && (
                 <div className="grid grid-cols-2 gap-6">
                   <div>
-                    <label className="text-xs font-bold text-gray-400 uppercase">Concepto</label>
+                    <label className="text-xs font-semibold text-gray-400 uppercase">Concepto</label>
                     <p className="text-lg font-medium dark:text-white">
                       {proposal?.result?.create?.event?.description || 
                        proposal?.result?.create?.event?.merchant?.name || 
@@ -4656,7 +4665,7 @@ service cloud.firestore {
                     </p>
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-gray-400 uppercase">Monto</label>
+                    <label className="text-xs font-semibold text-gray-400 uppercase">Monto</label>
                     <p className={cn(
                       "text-lg font-mono font-bold",
                       ['income', 'refund', 'debt_increase', 'loan_given'].includes(proposal?.result?.create?.event?.kind || '') 
@@ -4671,13 +4680,13 @@ service cloud.firestore {
                     </p>
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-gray-400 uppercase">Categoría</label>
+                    <label className="text-xs font-semibold text-gray-400 uppercase">Categoría</label>
                     <p className="text-sm bg-gray-100 dark:bg-gray-700 dark:text-gray-300 inline-block px-2 py-1 rounded-md">
                       {proposal?.result?.create?.event?.category || 'Sin categoría'}
                     </p>
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-gray-400 uppercase">{isTransferProposal ? 'Cuenta Origen' : 'Cuenta'}</label>
+                    <label className="text-xs font-semibold text-gray-400 uppercase">{isTransferProposal ? 'Cuenta Origen' : 'Cuenta'}</label>
                     <p className="text-sm flex items-center gap-1 dark:text-gray-300">
                       <CreditCard size={14} /> 
                       {proposal?.result?.create?.event?.accounts?.primary_account_ref?.name || 
@@ -4686,7 +4695,7 @@ service cloud.firestore {
                   </div>
                   {isTransferProposal && (
                     <div>
-                      <label className="text-xs font-bold text-gray-400 uppercase">Cuenta Destino</label>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">Cuenta Destino</label>
                       <p className="text-sm flex items-center gap-1 dark:text-gray-300">
                         <CreditCard size={14} /> 
                         {proposal?.pending_proposals?.[transferProposalIndex]?.result?.create?.event?.accounts?.primary_account_ref?.name || 
@@ -4700,14 +4709,14 @@ service cloud.firestore {
               {proposal?.result?.create_goal?.goal && (
                 <div className="grid grid-cols-2 gap-6">
                   <div>
-                    <label className="text-xs font-bold text-gray-400 uppercase">Meta</label>
+                    <label className="text-xs font-semibold text-gray-400 uppercase">Objetivo</label>
                     <p className="text-lg font-medium dark:text-white flex items-center gap-2">
                       <span>{proposal.result.create_goal.goal.emoji || '🎯'}</span>
                       {proposal.result.create_goal.goal.name || 'Sin nombre'}
                     </p>
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-gray-400 uppercase">Monto Objetivo</label>
+                    <label className="text-xs font-semibold text-gray-400 uppercase">Monto Objetivo</label>
                     <p className="text-lg font-mono font-bold text-emerald-600">
                       {proposal.result.create_goal.goal.target_amount !== null && proposal.result.create_goal.goal.target_amount !== undefined
                         ? `$${formatAmount(proposal.result.create_goal.goal.target_amount)}` 
@@ -4715,14 +4724,14 @@ service cloud.firestore {
                     </p>
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-gray-400 uppercase">Cuenta Vinculada</label>
+                    <label className="text-xs font-semibold text-gray-400 uppercase">Cuenta Vinculada</label>
                     <p className="text-sm flex items-center gap-1 dark:text-gray-300">
                       <CreditCard size={14} /> 
                       {proposal.result.create_goal.goal.account_name || 'Por definir'}
                     </p>
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-gray-400 uppercase">Fecha Límite</label>
+                    <label className="text-xs font-semibold text-gray-400 uppercase">Fecha Límite</label>
                     <p className="text-sm dark:text-gray-300">
                       {proposal.result.create_goal.goal.deadline || 'Sin fecha'}
                     </p>
@@ -4734,7 +4743,7 @@ service cloud.firestore {
 
               {proposal?.follow_up_questions && proposal?.follow_up_questions?.length > 0 && (
                 <div className="bg-amber-50 dark:bg-amber-900/30 p-4 rounded-xl border border-amber-100 dark:border-amber-900">
-                  <p className="text-xs font-bold text-amber-800 dark:text-amber-400 uppercase mb-2">Preguntas de seguimiento</p>
+                  <p className="text-xs font-medium text-amber-800 dark:text-amber-400 uppercase mb-2">Preguntas de seguimiento</p>
                   <ul className="list-disc list-inside text-sm text-amber-900 dark:text-amber-300 space-y-1">
                     {proposal?.follow_up_questions?.map((q, i) => <li key={i}>{q}</li>)}
                   </ul>
@@ -4795,7 +4804,7 @@ service cloud.firestore {
               exit={{ opacity: 0, scale: 0.95 }}
               className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100 dark:border-gray-700"
             >
-              <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-900/50">
+              <div className="p-4 sm:p-5 md:p-6 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-900/50">
                 <h3 className="text-lg font-bold dark:text-white flex items-center gap-2">
                   <Pencil size={18} className="text-emerald-500" /> Editar Movimiento
                 </h3>
@@ -4816,9 +4825,9 @@ service cloud.firestore {
                   occurred_at: formData.get('occurred_at')
                 };
                 handleUpdateEvent(updated);
-              }} className="p-6 space-y-4">
+              }} className="p-4 sm:p-5 md:p-6 space-y-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-gray-400 uppercase">Concepto</label>
+                  <label className="text-xs font-semibold text-gray-400 uppercase">Concepto</label>
                   <input 
                     name="description" 
                     defaultValue={editingEvent.description}
@@ -4829,7 +4838,7 @@ service cloud.firestore {
                 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-400 uppercase">Monto</label>
+                    <label className="text-xs font-semibold text-gray-400 uppercase">Monto</label>
                     <input 
                       name="amount" 
                       type="number" 
@@ -4840,7 +4849,7 @@ service cloud.firestore {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-400 uppercase">Fecha</label>
+                    <label className="text-xs font-semibold text-gray-400 uppercase">Fecha</label>
                     <input 
                       name="occurred_at" 
                       type="date" 
@@ -4860,7 +4869,7 @@ service cloud.firestore {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-400 uppercase">Categoría</label>
+                    <label className="text-xs font-semibold text-gray-400 uppercase">Categoría</label>
                     <div className="relative">
                       <select
                         name="category" 
@@ -4881,7 +4890,7 @@ service cloud.firestore {
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-400 uppercase">Cuenta</label>
+                    <label className="text-xs font-semibold text-gray-400 uppercase">Cuenta</label>
                     <div className="relative">
                       <select
                         name="account_name" 
@@ -4930,7 +4939,7 @@ service cloud.firestore {
                     <button 
                       type="button"
                       onClick={() => setEditingEvent(null)}
-                      className="flex-1 py-3 border border-gray-200 dark:border-gray-700 rounded-xl font-bold text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all text-sm"
+                      className="flex-1 py-3 border border-gray-200 dark:border-gray-700 rounded-xl font-semibold text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all text-sm"
                     >
                       Cancelar
                     </button>
@@ -4950,13 +4959,13 @@ service cloud.firestore {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white dark:bg-gray-800 rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden border border-red-100 dark:border-red-900/30"
+              className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-red-100 dark:border-red-900/30"
             >
-              <div className="p-8 text-center">
+              <div className="p-5 sm:p-6 md:p-8 text-center">
                 <div className="w-20 h-20 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center text-red-600 dark:text-red-400 mx-auto mb-6">
                   <AlertCircle size={40} />
                 </div>
-                <h3 className="text-2xl font-black dark:text-white mb-4 tracking-tight">¿Eliminar movimiento?</h3>
+                <h3 className="text-xl sm:text-2xl font-black dark:text-white mb-4 tracking-tight">¿Eliminar movimiento?</h3>
                 <div className="bg-red-50 dark:bg-red-900/10 p-4 rounded-2xl mb-8">
                   <p className="text-red-800 dark:text-red-300 text-sm font-medium leading-relaxed">
                     Esta acción es permanente y no se puede deshacer. Se actualizarán tus saldos y análisis automáticamente.
@@ -4988,7 +4997,7 @@ service cloud.firestore {
                   <button 
                     onClick={() => setIsDeleting(false)}
                     disabled={isProcessing}
-                    className="w-full py-4 text-gray-500 dark:text-gray-400 font-bold hover:bg-gray-50 dark:hover:bg-gray-700 rounded-2xl transition-all"
+                    className="w-full py-4 text-gray-500 dark:text-gray-400 font-semibold hover:bg-gray-50 dark:hover:bg-gray-700 rounded-2xl transition-all"
                   >
                     Cancelar
                   </button>
@@ -5004,13 +5013,13 @@ service cloud.firestore {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white dark:bg-gray-800 rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden border border-red-100 dark:border-red-900/30"
+              className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-red-100 dark:border-red-900/30"
             >
-              <div className="p-8 text-center">
+              <div className="p-5 sm:p-6 md:p-8 text-center">
                 <div className="w-20 h-20 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center text-red-600 dark:text-red-400 mx-auto mb-6">
                   <AlertCircle size={40} />
                 </div>
-                <h3 className="text-2xl font-black dark:text-white mb-4 tracking-tight">¿Eliminar meta?</h3>
+                <h3 className="text-xl sm:text-2xl font-black dark:text-white mb-4 tracking-tight">¿Eliminar objetivo?</h3>
                 <div className="bg-red-50 dark:bg-red-900/10 p-4 rounded-2xl mb-8">
                   <p className="text-red-800 dark:text-red-300 text-sm font-medium leading-relaxed">
                     Esta acción es permanente y no se puede deshacer. Perderás el seguimiento de este ahorro.
@@ -5042,7 +5051,7 @@ service cloud.firestore {
                   <button 
                     onClick={() => setIsDeletingGoal(null)}
                     disabled={isProcessing}
-                    className="w-full py-4 text-gray-500 dark:text-gray-400 font-bold hover:bg-gray-50 dark:hover:bg-gray-700 rounded-2xl transition-all"
+                    className="w-full py-4 text-gray-500 dark:text-gray-400 font-semibold hover:bg-gray-50 dark:hover:bg-gray-700 rounded-2xl transition-all"
                   >
                     Cancelar
                   </button>
@@ -5090,7 +5099,7 @@ service cloud.firestore {
       <button
         onClick={loadMoreEvents}
         disabled={isLoadingMore}
-        className="flex items-center gap-2 px-6 py-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-sm font-bold text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all shadow-sm disabled:opacity-50"
+        className="flex items-center gap-2 px-6 py-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-sm font-semibold text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all shadow-sm disabled:opacity-50"
       >
         {isLoadingMore 
           ? <Loader2 size={16} className="animate-spin" />
@@ -5153,15 +5162,15 @@ service cloud.firestore {
     return (
     <div className="space-y-8">
       {/* Análisis Inteligente con IA */}
-      <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none min-w-0 overflow-hidden">
+      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none min-w-0 overflow-hidden">
         {!analysisGenerated ? (
           <div className="p-8 flex flex-col items-center text-center">
             <div className="w-16 h-16 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-emerald-500/30">
               <Sparkles className="text-white" size={32} />
             </div>
             <h3 className="text-2xl font-black text-gray-900 dark:text-white mb-2">Análisis Inteligente con IA</h3>
-            <p className="text-gray-500 dark:text-gray-400 max-w-md mb-6">
-              Descubre en qué estás gastando de más y cómo alcanzar tus metas más rápido
+            <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 max-w-md mb-6">
+              Descubre en qué estás gastando de más y cómo alcanzar tus objetivos más rápido
             </p>
             {isPremium === true ? (
               <button
@@ -5197,7 +5206,7 @@ service cloud.firestore {
                   const [year, monthNum] = chatMonth.split('-');
                   const monthLabel = mesesNombres[parseInt(monthNum) - 1] + ' ' + year;
                   return (
-                    <span className="text-xs font-bold text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded-lg">
+                    <span className="text-xs font-medium text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded-lg">
                       {monthLabel}
                     </span>
                   );
@@ -5283,7 +5292,7 @@ service cloud.firestore {
                     }
                   }}
                   placeholder="Pregúntame algo sobre tu análisis..."
-                  className="flex-1 resize-none h-10 max-h-32 min-h-[40px] py-2 px-4 bg-gray-100 dark:bg-gray-700 border-transparent focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-2xl text-sm dark:text-white"
+                  className="flex-1 resize-none h-10 max-h-32 min-h-[40px] py-2 px-4 bg-gray-100 dark:bg-gray-700 border-transparent focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl text-sm dark:text-white"
                   rows={1}
                 />
                 <button
@@ -5301,7 +5310,7 @@ service cloud.firestore {
       {renderFilterBar()}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         {/* Balance by Account */}
-        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none min-w-0">
+        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none min-w-0">
           <h3 className="text-lg font-bold mb-6 dark:text-white">Saldos por Cuenta</h3>
           <div className="w-full min-h-[300px] transition-all duration-300 ease-in-out" style={{ height: getChartHeight(analytics?.incomeByAccount || []) }}>
             <AnimatePresence mode="wait">
@@ -5381,7 +5390,7 @@ service cloud.firestore {
         </motion.div>
 
         {/* Expenses by Category */}
-        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none min-w-0">
+        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none min-w-0">
           <h3 className="text-lg font-bold mb-6 dark:text-white">Salidas por Categoría</h3>
           <div className="w-full min-h-[300px] transition-all duration-300 ease-in-out" style={{ height: getChartHeight(analytics?.expensesByCategory || []) }}>
             <AnimatePresence mode="wait">
@@ -5461,7 +5470,7 @@ service cloud.firestore {
         </motion.div>
 
         {/* Debts by Counterparty */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none md:col-span-2 min-w-0">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none md:col-span-2 min-w-0">
           <h3 className="text-lg font-bold mb-6 dark:text-white">Deudas por Acreedor</h3>
           <div className="h-[300px] min-h-[300px] w-full flex items-center justify-center transition-all duration-300 ease-in-out">
             <AnimatePresence mode="wait">
@@ -5509,7 +5518,7 @@ service cloud.firestore {
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.9 }}
                     transition={{ duration: 0.3 }}
-                    className="text-gray-400 dark:text-gray-500 italic text-center"
+                    className="text-gray-400 dark:text-gray-500 italic text-center text-xs sm:text-sm"
                   >
                     No hay deudas registradas
                   </motion.div>
@@ -5530,7 +5539,7 @@ service cloud.firestore {
         </motion.div>
 
         {/* Loans by Debtor */}
-        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none min-w-0">
+        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none min-w-0">
           <h3 className="text-lg font-bold mb-6 dark:text-white">Préstamos por Cobrar</h3>
           <div className="h-[300px] min-h-[300px] w-full flex items-center justify-center transition-all duration-300 ease-in-out">
             <AnimatePresence mode="wait">
@@ -5578,7 +5587,7 @@ service cloud.firestore {
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.9 }}
                     transition={{ duration: 0.3 }}
-                    className="text-gray-400 dark:text-gray-500 italic text-center"
+                    className="text-gray-400 dark:text-gray-500 italic text-center text-xs sm:text-sm"
                   >
                     No hay préstamos por cobrar
                   </motion.div>
@@ -5625,8 +5634,8 @@ service cloud.firestore {
       <div className="space-y-6 pb-20">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-2xl font-black dark:text-white tracking-tight">Mis Metas</h2>
-            <p className="text-sm text-gray-500">Ahorra para lo que más quieres</p>
+            <h2 className="text-xl sm:text-2xl font-black dark:text-white tracking-tight">Mis Metas</h2>
+            <p className="text-xs sm:text-sm text-gray-500">Ahorra para lo que más quieres</p>
           </div>
           <button 
             onClick={() => {
@@ -5645,7 +5654,7 @@ service cloud.firestore {
               <Target size={40} />
             </div>
             <h3 className="text-xl font-bold dark:text-white mb-2">¿Cuál es tu próximo sueño?</h3>
-            <p className="text-gray-500 dark:text-gray-400 mb-8 max-w-xs mx-auto">Crea tu primera meta y ContaBot te ayudará a darle seguimiento a tus ahorros.</p>
+            <p className="text-gray-500 dark:text-gray-400 mb-8 max-w-xs mx-auto text-xs sm:text-sm">Crea tu primer objetivo y ContaBot te ayudará a darle seguimiento a tus ahorros.</p>
             <div className="grid grid-cols-2 gap-3">
               {GOAL_TEMPLATES.slice(0, 4).map((template, idx) => (
                 <button
@@ -5664,7 +5673,7 @@ service cloud.firestore {
                   className="p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 hover:border-emerald-500 transition-all text-left group"
                 >
                   <span className="text-2xl mb-2 block group-hover:scale-110 transition-transform">{template.emoji}</span>
-                  <p className="text-xs font-bold dark:text-white">{template.name}</p>
+                  <p className="text-xs font-medium dark:text-white">{template.name}</p>
                 </button>
               ))}
             </div>
@@ -5697,7 +5706,7 @@ service cloud.firestore {
                         <div>
                           <h3 className="font-black text-lg dark:text-white leading-tight">{goal.name}</h3>
                           <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">
                               ${formatAmount(current_amount)} / ${formatAmount(goal.target_amount)}
                             </span>
                           </div>
@@ -5781,18 +5790,18 @@ service cloud.firestore {
                 initial={{ opacity: 0, scale: 0.95, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                className="bg-white dark:bg-gray-900 rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden border border-gray-100 dark:border-gray-800 flex flex-col max-h-[90vh]"
+                className="bg-white dark:bg-gray-900 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-gray-100 dark:border-gray-800 flex flex-col max-h-[90vh]"
               >
-                <div className="p-6 flex items-center justify-between border-b border-gray-100 dark:border-gray-800 shrink-0">
-                  <h3 className="text-xl font-black dark:text-white tracking-tight">
-                    {goalForm.id ? 'Editar Meta' : 'Nueva Meta'}
+                <div className="p-4 sm:p-5 md:p-6 flex items-center justify-between border-b border-gray-100 dark:border-gray-800 shrink-0">
+                  <h3 className="text-lg sm:text-xl font-black dark:text-white tracking-tight">
+                    {goalForm.id ? 'Editar Objetivo' : 'Nuevo Objetivo'}
                   </h3>
                   <button onClick={() => setIsAddingGoal(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
                     <X size={24} className="text-gray-400" />
                   </button>
                 </div>
 
-                <div className="p-6 overflow-y-auto flex-1 no-scrollbar">
+                <div className="p-4 sm:p-5 md:p-6 overflow-y-auto flex-1 no-scrollbar">
                   <form id="goal-form" onSubmit={handleSaveGoal} className="space-y-8">
                     
                     {/* Emoji & Name Section */}
@@ -5818,7 +5827,7 @@ service cloud.firestore {
                           value={goalForm.name}
                           onChange={(e) => setGoalForm({ ...goalForm, name: e.target.value })}
                           className="w-full text-center text-2xl bg-transparent outline-none dark:text-white font-black placeholder:text-gray-300 dark:placeholder:text-gray-700"
-                          placeholder="Nombre de la Meta"
+                          placeholder="Nombre del Objetivo"
                           required
                         />
                       </div>
@@ -5834,7 +5843,7 @@ service cloud.firestore {
                             type="number"
                             value={goalForm.target_amount || ''}
                             onChange={(e) => setGoalForm({ ...goalForm, target_amount: parseFloat(e.target.value) })}
-                            className="w-full h-14 pl-10 pr-4 bg-gray-50 dark:bg-gray-800 border-none rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white font-bold text-lg transition-all"
+                            className="w-full h-14 pl-10 pr-4 bg-gray-50 dark:bg-gray-800 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white font-bold text-lg transition-all"
                             placeholder="0.00"
                             required
                           />
@@ -5847,7 +5856,7 @@ service cloud.firestore {
                           <select
                             value={goalForm.account_name || ''}
                             onChange={(e) => setGoalForm({ ...goalForm, account_name: e.target.value })}
-                            className="w-full h-14 px-4 bg-gray-50 dark:bg-gray-800 border-none rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white font-bold appearance-none transition-all"
+                            className="w-full h-14 px-4 bg-gray-50 dark:bg-gray-800 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white font-bold appearance-none transition-all"
                             required
                           >
                             <option value="" disabled>Selecciona una cuenta</option>
@@ -5865,7 +5874,7 @@ service cloud.firestore {
                           type="date"
                           value={goalForm.deadline}
                           onChange={(e) => setGoalForm({ ...goalForm, deadline: e.target.value })}
-                          className="w-full h-14 px-4 bg-gray-50 dark:bg-gray-800 border-none rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white font-bold transition-all"
+                          className="w-full h-14 px-4 bg-gray-50 dark:bg-gray-800 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white font-bold transition-all"
                         />
                       </div>
 
@@ -5908,7 +5917,7 @@ service cloud.firestore {
                   </form>
                 </div>
                 
-                <div className="p-6 border-t border-gray-100 dark:border-gray-800 shrink-0 bg-white dark:bg-gray-900">
+                <div className="p-4 sm:p-5 md:p-6 border-t border-gray-100 dark:border-gray-800 shrink-0 bg-white dark:bg-gray-900">
                   <button 
                     form="goal-form"
                     type="submit"
@@ -5916,7 +5925,7 @@ service cloud.firestore {
                     className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-bold text-lg hover:bg-emerald-600 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                   >
                     {isProcessing ? <Loader2 className="animate-spin" /> : <Save size={20} />}
-                    {goalForm.id ? 'Actualizar Meta' : 'Crear Meta'}
+                    {goalForm.id ? 'Actualizar Objetivo' : 'Crear Objetivo'}
                   </button>
                 </div>
               </motion.div>
@@ -5938,8 +5947,8 @@ service cloud.firestore {
     }
 
     return (
-    <div className="max-w-2xl mx-auto space-y-6 pb-20">
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
+    <div className="max-w-2xl mx-auto space-y-4 sm:space-y-6 pb-20">
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-gray-800 p-4 sm:p-6 md:p-8 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
         <div className="flex items-center justify-between mb-8">
           <h3 className="text-xl font-bold dark:text-white">Perfil de Usuario</h3>
           <button 
@@ -5986,8 +5995,8 @@ service cloud.firestore {
           </div>
           {!isEditingProfile && (
             <div className="mt-4 text-center">
-              <h4 className="text-xl font-bold dark:text-white">{user?.username}</h4>
-              <p className="text-sm text-gray-500">
+              <h4 className="text-xl font-semibold dark:text-white">{user?.username}</h4>
+              <p className="text-xs sm:text-sm text-gray-500">
                 {(user?.email && !user.email.endsWith('@phone.contabot.com')) 
                   ? user.email 
                   : user?.phone || 'Sin contacto'}
@@ -5999,7 +6008,7 @@ service cloud.firestore {
         {isEditingProfile ? (
           <form onSubmit={handleUpdateProfile} className="space-y-4">
             <div className="space-y-1">
-              <label className="text-xs font-bold text-gray-400 uppercase">Nombre de Usuario</label>
+              <label className="text-xs font-semibold text-gray-400 uppercase">Nombre de Usuario</label>
               <div className="relative">
                 <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                 <input 
@@ -6014,7 +6023,7 @@ service cloud.firestore {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-1">
-                <label className="text-xs font-bold text-gray-400 uppercase">Correo Electrónico</label>
+                <label className="text-xs font-semibold text-gray-400 uppercase">Correo Electrónico</label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                   <input 
@@ -6027,7 +6036,7 @@ service cloud.firestore {
                 </div>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-bold text-gray-400 uppercase">Teléfono</label>
+                <label className="text-xs font-semibold text-gray-400 uppercase">Teléfono</label>
                 <div className="relative">
                   <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                   <input 
@@ -6045,7 +6054,7 @@ service cloud.firestore {
               <h4 className="text-sm font-bold text-gray-400 uppercase mb-4">Cambiar Contraseña</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-gray-400 uppercase">Nueva Contraseña</label>
+                  <label className="text-xs font-semibold text-gray-400 uppercase">Nueva Contraseña</label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                     <input 
@@ -6058,7 +6067,7 @@ service cloud.firestore {
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-gray-400 uppercase">Confirmar Contraseña</label>
+                  <label className="text-xs font-semibold text-gray-400 uppercase">Confirmar Contraseña</label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                     <input 
@@ -6149,7 +6158,7 @@ service cloud.firestore {
         )}
       </motion.div>
       
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-xl font-bold dark:text-white">Estado de Suscripción</h3>
           <div className="flex items-center gap-2">
@@ -6210,7 +6219,7 @@ service cloud.firestore {
               )}>
                 {isPremium ? <Crown size={18} /> : <UserIcon size={18} />}
               </div>
-              <p className="font-bold dark:text-white text-base leading-tight">
+              <p className="font-semibold dark:text-white text-base leading-tight">
                 {isPremium === null ? 'Verificando estado...' : (isPremium ? 'Plan Premium Activo' : 'Usuario Estándar')}
               </p>
             </div>
@@ -6246,7 +6255,7 @@ service cloud.firestore {
         )}
       </motion.div>
 
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none mb-6">
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="bg-white dark:bg-gray-800 p-4 sm:p-6 md:p-8 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none mb-6">
         <div className="flex items-center justify-between mb-8">
           <h3 className="text-xl font-bold dark:text-white">Cuentas y Tarjetas</h3>
           {!isAddingAccount && (
@@ -6266,14 +6275,14 @@ service cloud.firestore {
         {isAddingAccount ? (
           <form onSubmit={handleSaveAccount} className="space-y-4 bg-gray-50 dark:bg-gray-900 p-6 rounded-2xl border border-gray-100 dark:border-gray-800">
             <div className="flex justify-between items-center mb-4">
-              <h4 className="font-bold dark:text-white">{accountForm.id ? 'Editar Cuenta' : 'Nueva Cuenta'}</h4>
+              <h4 className="font-semibold dark:text-white">{accountForm.id ? 'Editar Cuenta' : 'Nueva Cuenta'}</h4>
               <button type="button" onClick={() => setIsAddingAccount(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
                 <X size={20} />
               </button>
             </div>
             
             <div className="space-y-1">
-              <label className="text-xs font-bold text-gray-400 uppercase">Nombre de la Cuenta (Ej. AMEX Crédito)</label>
+              <label className="text-xs font-semibold text-gray-400 uppercase">Nombre de la Cuenta (Ej. AMEX Crédito)</label>
               <input 
                 type="text"
                 value={accountForm.name}
@@ -6285,7 +6294,7 @@ service cloud.firestore {
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-bold text-gray-400 uppercase">Tipo de Cuenta</label>
+              <label className="text-xs font-semibold text-gray-400 uppercase">Tipo de Cuenta</label>
               <select 
                 value={accountForm.type}
                 onChange={(e) => setAccountForm({ ...accountForm, type: e.target.value })}
@@ -6299,7 +6308,7 @@ service cloud.firestore {
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-bold text-gray-400 uppercase">Tarjetas Asociadas (Opcional, separadas por coma)</label>
+              <label className="text-xs font-semibold text-gray-400 uppercase">Tarjetas Asociadas (Opcional, separadas por coma)</label>
               <input 
                 type="text"
                 value={accountForm.cards}
@@ -6312,7 +6321,7 @@ service cloud.firestore {
 
             {(accountForm.type === 'savings') && (
               <div className="space-y-1">
-                <label className="text-xs font-bold text-gray-400 uppercase">Tasa de interés anual (%) (Opcional)</label>
+                <label className="text-xs font-semibold text-gray-400 uppercase">Tasa de interés anual (%) (Opcional)</label>
                 <div className="relative">
                   <input 
                     type="number"
@@ -6343,7 +6352,7 @@ service cloud.firestore {
               <button 
                 type="button"
                 onClick={() => setIsAddingAccount(false)}
-                className="flex-1 py-3 bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-xl font-bold hover:bg-gray-300 dark:hover:bg-gray-700 transition-all text-sm"
+                className="flex-1 py-3 bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-xl font-semibold hover:bg-gray-300 dark:hover:bg-gray-700 transition-all text-sm"
               >
                 Cancelar
               </button>
@@ -6361,7 +6370,7 @@ service cloud.firestore {
           <div className="space-y-4">
             {displayAccounts.length === 0 ? (
               <div className="text-center py-8 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700">
-                <p className="text-gray-500 dark:text-gray-400 mb-2">No tienes cuentas configuradas</p>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mb-2">No tienes cuentas configuradas</p>
                 <p className="text-xs text-gray-400">Agrega tus cuentas para que ContaBot las reconozca automáticamente.</p>
               </div>
             ) : (
@@ -6382,7 +6391,7 @@ service cloud.firestore {
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <h4 className="font-bold dark:text-white">{acc.name}</h4>
+                            <h4 className="font-semibold dark:text-white">{acc.name}</h4>
                             {acc.id.startsWith('auto_') && (
                               <span className="px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 rounded text-[9px] font-bold uppercase tracking-wider">Auto</span>
                             )}
@@ -6430,8 +6439,8 @@ service cloud.firestore {
       <motion.div 
         initial={{ opacity: 0, y: 20 }} 
         animate={{ opacity: 1, y: 0 }} 
-        transition={{ delay: 0.15 }} 
-        className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none mb-6"
+        transition={{ delay: 0.08 }} 
+        className="bg-white dark:bg-gray-800 p-4 sm:p-6 md:p-8 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none mb-6"
       >
         <div className="flex items-center justify-between mb-8">
           <h3 className="text-xl font-bold dark:text-white">Categorías</h3>
@@ -6478,7 +6487,7 @@ service cloud.firestore {
 
         {userCategories.length === 0 ? (
           <div className="text-center py-8 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700">
-            <p className="text-gray-500 dark:text-gray-400 mb-1">
+            <p className="text-gray-500 dark:text-gray-400 mb-1 text-xs sm:text-sm">
               No hay categorías todavía
             </p>
             <p className="text-xs text-gray-400">
@@ -6541,17 +6550,17 @@ service cloud.firestore {
         )}
       </motion.div>
 
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bg-white dark:bg-gray-800 p-4 sm:p-6 md:p-8 rounded-3xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bg-white dark:bg-gray-800 p-4 sm:p-6 md:p-8 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
         <h3 className="text-xl font-bold mb-8 dark:text-white">Preferencias</h3>
         
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
           <div className="flex items-center justify-between p-3 sm:p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl">
             <div className="flex items-center gap-3 min-w-0 flex-1">
               <div className="p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
                 {isDarkMode ? <Moon className="text-indigo-400" /> : <Sun className="text-amber-500" />}
               </div>
               <div className="min-w-0">
-                <p className="font-bold dark:text-white">Modo Oscuro</p>
+                <p className="font-semibold dark:text-white">Modo Oscuro</p>
                 <p className="text-xs text-gray-500 line-clamp-2">Cambia la apariencia de la app</p>
               </div>
             </div>
@@ -6576,13 +6585,13 @@ service cloud.firestore {
                   <Bell className="text-blue-500" size={20} />
                 </div>
                 <div className="min-w-0">
-                  <p className="font-bold dark:text-white">Notificaciones</p>
+                  <p className="font-semibold dark:text-white">Notificaciones</p>
                   <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">
                     {notificationPermission === 'denied'
                       ? 'Bloqueadas en el navegador'
                       : isPushEnabled
-                      ? 'Activadas — metas, deudas y recordatorios'
-                      : 'Recibe alertas de tus metas y finanzas'}
+                      ? 'Activadas — objetivos, deudas y recordatorios'
+                      : 'Recibe alertas de tus objetivos y finanzas'}
                   </p>
                 </div>
               </div>
@@ -6617,7 +6626,7 @@ service cloud.firestore {
                 <LogOut className="text-red-500" />
               </div>
               <div className="min-w-0">
-                <p className="font-bold dark:text-white">Cerrar Sesión</p>
+                <p className="font-semibold dark:text-white">Cerrar Sesión</p>
                 <p className="text-xs text-gray-500 line-clamp-2">Salir de tu cuenta actual</p>
               </div>
             </div>
@@ -6828,16 +6837,6 @@ service cloud.firestore {
             <h1 className="text-xl font-black tracking-tight dark:text-white">ContaBot</h1>
           </div>
           <div className="flex items-center gap-4">
-
-            <div className="text-right">
-              <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest">Balance Total</p>
-              <p className={cn(
-                "text-lg font-mono font-bold",
-                (summary.balance - summary.expenses) >= 0 ? "text-emerald-600" : "text-red-600"
-              )}>
-                ${formatAmount(summary.balance - summary.expenses)}
-              </p>
-            </div>
             <button onClick={toggleTheme} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors">
               {isDarkMode ? <Sun className="text-amber-400" /> : <Moon className="text-gray-400" />}
             </button>
@@ -6922,13 +6921,13 @@ service cloud.firestore {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white dark:bg-gray-800 rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden border border-red-100 dark:border-red-900/30"
+              className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-red-100 dark:border-red-900/30"
             >
-              <div className="p-8 text-center">
+              <div className="p-5 sm:p-6 md:p-8 text-center">
                 <div className="w-20 h-20 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center text-red-600 dark:text-red-400 mx-auto mb-6">
                   <AlertCircle size={40} />
                 </div>
-                <h3 className="text-2xl font-black dark:text-white mb-4 tracking-tight">¿Eliminar cuenta?</h3>
+                <h3 className="text-xl sm:text-2xl font-black dark:text-white mb-4 tracking-tight">¿Eliminar cuenta?</h3>
                 <div className="bg-red-50 dark:bg-red-900/10 p-4 rounded-2xl mb-8">
                   <p className="text-red-800 dark:text-red-300 text-sm font-medium leading-relaxed">
                     Esta acción es irreversible. Eliminar esta cuenta puede afectar a los saldos de las cuentas o a los gráficos ya creados.
@@ -6960,7 +6959,7 @@ service cloud.firestore {
                   <button 
                     onClick={() => setIsDeletingAccount(null)}
                     disabled={isProcessing}
-                    className="w-full py-4 text-gray-500 dark:text-gray-400 font-bold hover:bg-gray-50 dark:hover:bg-gray-700 rounded-2xl transition-all"
+                    className="w-full py-4 text-gray-500 dark:text-gray-400 font-semibold hover:bg-gray-50 dark:hover:bg-gray-700 rounded-2xl transition-all"
                   >
                     Cancelar
                   </button>
@@ -7065,7 +7064,7 @@ service cloud.firestore {
               view === 'goals' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-200 dark:shadow-none' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
             )}
           >
-            <Target size={20} /> <span className="hidden md:inline">Metas</span>
+            <Target size={20} /> <span className="hidden md:inline">Objetivos</span>
           </button>
           <button 
             onClick={() => setView('settings')}
@@ -7081,9 +7080,9 @@ service cloud.firestore {
 
       {/* Input Bar (Only visible on Home) */}
       {view === 'home' && (
-        <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[#e8ebf0] dark:from-gray-950 via-[#e8ebf0]/90 dark:via-gray-950 to-transparent p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] z-40">
+        <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[#e8ebf0] dark:from-gray-950 via-[#e8ebf0]/90 dark:via-gray-950 to-transparent backdrop-blur-sm p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] z-40">
           <div className="max-w-4xl mx-auto">
-            <form onSubmit={handleTextInput} className="flex items-center gap-2 bg-white dark:bg-gray-800 p-2 rounded-3xl shadow-xl border border-gray-100 dark:border-gray-700">
+            <form onSubmit={handleTextInput} className="flex items-center gap-2 bg-white dark:bg-gray-800 p-2 rounded-3xl shadow-xl border border-gray-200 dark:border-gray-700 transition-all duration-200 focus-within:border-emerald-500/50 focus-within:shadow-emerald-500/10 focus-within:shadow-2xl">
               <div className="flex-1 relative flex items-center">
                 <textarea 
                   ref={textareaRef}
@@ -7097,7 +7096,7 @@ service cloud.firestore {
                     }
                   }}
                   placeholder="¿Qué registramos hoy?"
-                  className="w-full bg-transparent border-none rounded-2xl px-4 py-3 focus:ring-0 dark:text-white resize-none max-h-[150px] overflow-y-auto leading-relaxed"
+                  className="w-full bg-transparent border-none rounded-xl px-4 py-3 focus:ring-0 dark:text-white resize-none max-h-[150px] overflow-y-auto leading-relaxed"
                   disabled={isProcessing}
                 />
               </div>
@@ -7285,7 +7284,7 @@ service cloud.firestore {
                   className="w-full h-full object-cover opacity-80"
                   referrerPolicy="no-referrer"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-6">
+                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-4 sm:p-5 md:p-6">
                   <div>
                     <span className="bg-emerald-500 text-white text-[10px] font-bold px-2 py-1 rounded-md uppercase tracking-wider mb-2 inline-block">Patrocinado</span>
                     <h3 className="text-white text-xl font-black">¡Ahorra más con ContaBot Pro!</h3>
@@ -7293,7 +7292,7 @@ service cloud.firestore {
                 </div>
               </div>
               
-              <div className="p-6">
+              <div className="p-4 sm:p-5 md:p-6">
                 <p className="text-gray-600 dark:text-gray-400 mb-6">
                   Obtén análisis detallados, múltiples cuentas y soporte prioritario. ¡Prueba 7 días gratis hoy mismo!
                 </p>
@@ -7392,7 +7391,7 @@ service cloud.firestore {
                   <button 
                     type="button"
                     onClick={() => { setShowCropModal(false); setImageToCrop(null); setCrop(undefined); }}
-                    className="flex-1 py-2.5 border border-gray-200 dark:border-gray-700 rounded-xl font-bold dark:text-white hover:bg-gray-50 dark:hover:bg-gray-800 transition-all text-sm"
+                    className="flex-1 py-2.5 border border-gray-200 dark:border-gray-700 rounded-xl font-semibold dark:text-white hover:bg-gray-50 dark:hover:bg-gray-800 transition-all text-sm"
                   >
                     Cancelar
                   </button>
@@ -7581,7 +7580,7 @@ service cloud.firestore {
                 </div>
                 <button 
                   onClick={() => setShowReceiptModal(null)}
-                  className="px-6 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all text-sm"
+                  className="px-6 py-2 bg-emerald-600 text-white rounded-xl font-semibold hover:bg-emerald-700 transition-all text-sm"
                 >
                   Cerrar
                 </button>
@@ -7598,18 +7597,18 @@ service cloud.firestore {
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="bg-white dark:bg-gray-900 w-full max-w-2xl rounded-[2.5rem] overflow-hidden shadow-2xl border border-gray-100 dark:border-gray-800"
+              className="bg-white dark:bg-gray-900 w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl border border-gray-100 dark:border-gray-800"
             >
-              <div className="p-8 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+              <div className="p-5 sm:p-6 md:p-8 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
                 <div>
-                  <h3 className="text-xl font-bold dark:text-white">Reglas de Seguridad de Firestore</h3>
-                  <p className="text-sm text-gray-500 mt-1">Copia y pega esto en tu Consola de Firebase</p>
+                  <h3 className="text-lg sm:text-xl font-bold dark:text-white">Reglas de Seguridad de Firestore</h3>
+                  <p className="text-xs sm:text-sm text-gray-500 mt-1">Copia y pega esto en tu Consola de Firebase</p>
                 </div>
                 <button onClick={() => setShowRulesHelper(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-all">
                   <X size={24} className="text-gray-400" />
                 </button>
               </div>
-              <div className="p-8">
+              <div className="p-5 sm:p-6 md:p-8">
                 <div className="bg-gray-950 rounded-2xl p-6 font-mono text-xs text-emerald-400 overflow-x-auto relative group">
                   <button 
                     onClick={() => {
@@ -7637,7 +7636,7 @@ service cloud.firestore {
                 </div>
                 <button 
                   onClick={() => setShowRulesHelper(false)}
-                  className="w-full mt-8 py-4 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-500/20"
+                  className="w-full mt-8 py-4 bg-emerald-600 text-white font-semibold rounded-2xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-500/20"
                 >
                   Entendido
                 </button>
@@ -7654,12 +7653,12 @@ service cloud.firestore {
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="bg-white dark:bg-gray-900 w-full max-w-md rounded-[2.5rem] overflow-hidden shadow-2xl border border-gray-100 dark:border-gray-800"
+              className="bg-white dark:bg-gray-900 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-gray-100 dark:border-gray-800"
             >
-              <div className="p-8 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+              <div className="p-5 sm:p-6 md:p-8 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
                 <div>
-                  <h3 className="text-xl font-bold dark:text-white">Exportar datos</h3>
-                  <p className="text-sm text-gray-500 mt-1">
+                  <h3 className="text-lg sm:text-xl font-bold dark:text-white">Exportar datos</h3>
+                  <p className="text-xs sm:text-sm text-gray-500 mt-1">
                     {getExportPeriodLabel()}
                   </p>
                 </div>
@@ -7670,7 +7669,7 @@ service cloud.firestore {
                   <X size={24} className="text-gray-400" />
                 </button>
               </div>
-              <div className="p-8">
+              <div className="p-5 sm:p-6 md:p-8">
                 {filterType === 'day' && (
                   <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 
                     dark:border-amber-800 rounded-xl text-amber-700 dark:text-amber-400 
@@ -7718,7 +7717,7 @@ service cloud.firestore {
                       setShowExportModal(false);
                       setExportFormat(null);
                     }}
-                    className="flex-1 py-4 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-bold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all"
+                    className="flex-1 py-4 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-semibold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all"
                   >
                     Cancelar
                   </button>
@@ -7753,11 +7752,11 @@ service cloud.firestore {
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="bg-white dark:bg-gray-900 w-full max-w-md rounded-[2.5rem] overflow-hidden shadow-2xl border border-gray-100 dark:border-gray-800"
+              className="bg-white dark:bg-gray-900 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-gray-100 dark:border-gray-800"
             >
-              <div className="p-8 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+              <div className="p-5 sm:p-6 md:p-8 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
                 <div>
-                  <h3 className="text-xl font-bold dark:text-white">
+                  <h3 className="text-lg sm:text-xl font-bold dark:text-white">
                     {resetStep === 1 && "Reinicio de Fábrica"}
                     {resetStep === 2 && "¿Estás completamente seguro?"}
                     {resetStep === 3 && "Confirma tu identidad"}
@@ -7767,7 +7766,7 @@ service cloud.firestore {
                   <X size={24} className="text-gray-400" />
                 </button>
               </div>
-              <div className="p-8">
+              <div className="p-5 sm:p-6 md:p-8">
                 {resetStep === 1 && (
                   <div className="flex flex-col items-center text-center">
                     <div className="p-4 bg-red-100 dark:bg-red-900/30 rounded-2xl mb-6">
@@ -7778,7 +7777,7 @@ service cloud.firestore {
                     </p>
                     <ul className="text-left text-sm text-gray-600 dark:text-gray-400 space-y-2 mb-6 w-full bg-gray-50 dark:bg-gray-800/50 p-4 rounded-2xl">
                       <li className="flex items-center gap-2">• Todos tus movimientos y transacciones</li>
-                      <li className="flex items-center gap-2">• Todas tus metas de ahorro</li>
+                      <li className="flex items-center gap-2">• Todos tus objetivos de ahorro</li>
                       <li className="flex items-center gap-2">• Todo el historial del chat con la IA</li>
                       <li className="flex items-center gap-2">• Todas tus cuentas configuradas</li>
                       <li className="flex items-center gap-2">• Tus contadores de uso mensual</li>
@@ -7792,7 +7791,7 @@ service cloud.firestore {
                     <div className="flex gap-4 w-full">
                       <button
                         onClick={closeResetModal}
-                        className="flex-1 py-4 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-bold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all"
+                        className="flex-1 py-4 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-semibold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all"
                       >
                         Cancelar
                       </button>
@@ -7826,7 +7825,7 @@ service cloud.firestore {
                       </button>
                       <button
                         onClick={closeResetModal}
-                        className="w-full py-4 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-bold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all"
+                        className="w-full py-4 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-semibold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all"
                       >
                         No, mejor no
                       </button>
@@ -7871,7 +7870,7 @@ service cloud.firestore {
                     <div className="flex gap-4 w-full">
                       <button
                         onClick={closeResetModal}
-                        className="flex-1 py-4 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-bold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all"
+                        className="flex-1 py-4 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-semibold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all"
                       >
                         Cancelar
                       </button>
@@ -7902,14 +7901,14 @@ service cloud.firestore {
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="bg-white dark:bg-gray-900 w-full max-w-md rounded-[2.5rem] overflow-hidden shadow-2xl border border-gray-100 dark:border-gray-800"
+              className="bg-white dark:bg-gray-900 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-gray-100 dark:border-gray-800"
             >
-              <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+              <div className="p-4 sm:p-5 md:p-6 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
                 <div>
                   <h3 className="text-lg font-bold dark:text-white">
                     Eliminar "{categoryToDelete}"
                   </h3>
-                  <p className="text-sm text-gray-500 mt-1">
+                  <p className="text-xs sm:text-sm text-gray-500 mt-1">
                     ¿A qué categoría mover los movimientos?
                   </p>
                 </div>
@@ -7924,7 +7923,7 @@ service cloud.firestore {
                 </button>
               </div>
 
-              <div className="p-6 space-y-3 max-h-[50vh] overflow-y-auto">
+              <div className="p-4 sm:p-5 md:p-6 space-y-3 max-h-[50vh] overflow-y-auto">
                 {userCategories
                   .filter(c => c !== categoryToDelete)
                   .map(category => (
@@ -7984,20 +7983,20 @@ service cloud.firestore {
                         if (e.key === 'Enter') executeDeleteWithReassign(); 
                       }}
                       placeholder="Nombre de la nueva categoría"
-                      className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border-2 border-emerald-500 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 outline-none dark:text-white text-sm"
+                      className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border-2 border-emerald-500 rounded-xl focus:ring-2 focus:ring-emerald-500/20 outline-none dark:text-white text-sm"
                       autoFocus
                     />
                   </motion.div>
                 )}
               </div>
 
-              <div className="p-6 border-t border-gray-100 dark:border-gray-800 flex gap-3">
+              <div className="p-4 sm:p-5 md:p-6 border-t border-gray-100 dark:border-gray-800 flex gap-3">
                 <button
                   onClick={() => {
                     setShowReassignModal(false);
                     setCategoryToDelete(null);
                   }}
-                  className="flex-1 py-3 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-bold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all text-sm"
+                  className="flex-1 py-3 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-semibold rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-all text-sm"
                 >
                   Cancelar
                 </button>

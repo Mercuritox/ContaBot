@@ -14,7 +14,7 @@ const beneficiosPremium = [
   "Fotos de tickets ilimitadas",
   "Movimientos por audio ilimitados",
   "Gráficas precisas",
-  "Metas dinámicas",
+  "Objetivos dinámicos",
   "Registros ilimitados",
   "Exportación de datos en PDF y Excel",
   "Sin anuncios",
@@ -25,7 +25,7 @@ const beneficiosPremium = [
 const beneficiosFree = [
   "Registros ilimitados",
   "Gráficas precisas",
-  "Metas dinámicas",
+  "Objetivos dinámicos",
   "5 fotos de tickets por mes",
   "5 usos de audio por mes",
   "Soporte por email",
