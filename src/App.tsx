@@ -5231,7 +5231,7 @@ service cloud.firestore {
             )}
           </div>
         ) : (
-          <div className="flex flex-col h-[500px]">
+          <div className="flex flex-col h-[520px] rounded-2xl overflow-hidden">
             <div className="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50">
               <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
                 <Sparkles className="text-emerald-500" size={18} />
@@ -5273,7 +5273,7 @@ service cloud.firestore {
                 <RefreshCw size={18} />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50 dark:bg-gray-900/50">
               {aiChatMessages.map((msg, idx) => (
                 <div key={idx} className={cn("flex gap-3 max-w-[85%]", msg.role === 'user' ? "ml-auto flex-row-reverse" : "")}>
                   {msg.role === 'user' ? (
@@ -5293,7 +5293,7 @@ service cloud.firestore {
                       <img src={APP_LOGO} alt="ContaBot" className="w-5 h-5 object-contain" />
                     </div>
                   )}
-                  <div className={cn("px-4 py-3 rounded-2xl text-sm", msg.role === 'user' ? "bg-emerald-500 text-white rounded-tr-sm" : "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-tl-sm")}>
+                  <div className={cn("px-4 py-3 rounded-2xl text-sm shadow-sm", msg.role === 'user' ? "bg-emerald-500 text-white rounded-tr-sm" : "bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-tl-sm")}>
                     {msg.role === 'user' ? (
                       msg.text
                     ) : (
@@ -5309,7 +5309,7 @@ service cloud.firestore {
                   <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center bg-emerald-500">
                     <img src={APP_LOGO} alt="ContaBot" className="w-5 h-5 object-contain" />
                   </div>
-                  <div className="px-4 py-4 rounded-2xl rounded-tl-sm bg-gray-100 dark:bg-gray-700 flex items-center gap-1">
+                  <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white dark:bg-gray-800 shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-1">
                     <motion.div animate={{ y: [0, -5, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0 }} className="w-1.5 h-1.5 bg-gray-400 rounded-full" />
                     <motion.div animate={{ y: [0, -5, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.2 }} className="w-1.5 h-1.5 bg-gray-400 rounded-full" />
                     <motion.div animate={{ y: [0, -5, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.4 }} className="w-1.5 h-1.5 bg-gray-400 rounded-full" />
@@ -5317,7 +5317,7 @@ service cloud.firestore {
                 </div>
               )}
             </div>
-            <div className="p-4 border-t border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
+            <div className="p-4 border-t border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900">
               <div className="flex gap-2">
                 <textarea
                   value={aiChatInput}
@@ -5886,7 +5886,7 @@ service cloud.firestore {
                           type="text"
                           value={goalForm.name}
                           onChange={(e) => setGoalForm({ ...goalForm, name: e.target.value })}
-                          className="w-full text-center text-2xl bg-transparent outline-none dark:text-white font-black placeholder:text-gray-300 dark:placeholder:text-gray-700"
+                          className="w-full text-center text-2xl bg-gray-50 dark:bg-gray-800 rounded-2xl px-4 py-3 outline-none dark:text-white font-black placeholder:text-gray-300 dark:placeholder:text-gray-700 focus:ring-2 focus:ring-emerald-500 transition-all"
                           placeholder="Nombre del Objetivo"
                           required
                         />
@@ -5934,7 +5934,7 @@ service cloud.firestore {
                           type="date"
                           value={goalForm.deadline}
                           onChange={(e) => setGoalForm({ ...goalForm, deadline: e.target.value })}
-                          className="w-full h-14 px-4 bg-gray-50 dark:bg-gray-800 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white font-bold transition-all"
+                          className="w-full h-14 px-4 bg-gray-50 dark:bg-gray-800 border-2 border-gray-100 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white font-bold transition-all"
                         />
                       </div>
 
