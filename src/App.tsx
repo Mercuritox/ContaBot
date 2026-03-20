@@ -249,6 +249,26 @@ async function getCroppedImg(imageSrc: string, pixelCrop: PixelCrop): Promise<st
   });
 }
 
+const SkeletonBlock = ({ className }: { className?: string }) => (
+  <div className={`animate-pulse bg-gray-200 dark:bg-gray-700 rounded-xl ${className}`} />
+);
+
+const HomeSkeleton = () => (
+  <div className="space-y-5">
+    <SkeletonBlock className="h-36 rounded-3xl" />
+    <div className="grid grid-cols-2 gap-3">
+      <SkeletonBlock className="h-24 rounded-2xl" />
+      <SkeletonBlock className="h-24 rounded-2xl" />
+    </div>
+    <div className="space-y-3">
+      <SkeletonBlock className="h-4 w-32 rounded-full" />
+      <SkeletonBlock className="h-16 rounded-2xl" />
+      <SkeletonBlock className="h-16 rounded-2xl" />
+      <SkeletonBlock className="h-16 rounded-2xl" />
+    </div>
+  </div>
+);
+
 export default function App() {
   const [view, setView] = useState<View>('auth');
   const [goals, setGoals] = useState<Goal[]>([]);
@@ -3887,12 +3907,16 @@ service cloud.firestore {
       <motion.div 
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white dark:bg-gray-900 p-10 rounded-[2.5rem] shadow-2xl w-full max-w-[450px] border border-gray-100 dark:border-gray-800"
+        className="bg-white dark:bg-gray-900 px-6 pt-0 pb-8 sm:px-8 sm:pb-10 rounded-[2.5rem] shadow-2xl w-full max-w-[450px] border border-gray-100 dark:border-gray-800 overflow-hidden"
       >
-        <div className="text-center mb-10">
-          <img src={APP_LOGO} alt="Logo" className="w-14 h-14 mx-auto mb-6 shadow-lg shadow-emerald-500/20 rounded-2xl object-cover" referrerPolicy="no-referrer" />
-          <h2 className="text-2xl sm:text-3xl font-black dark:text-white tracking-tight leading-tight">
-            {authMode === 'login' ? '¡Hola de nuevo!' : 'Regístrate para empezar a ahorrar'}
+        <div className="text-center -mx-10 -mt-10 mb-8">
+          <div className="bg-emerald-600 pt-14 pb-10 px-10 flex flex-col items-center">
+            <img src={APP_LOGO} alt="Logo" className="w-14 h-14 mb-3 rounded-2xl shadow-lg" referrerPolicy="no-referrer" />
+            <h1 className="text-xl font-black text-white tracking-tight">ContaBot</h1>
+            <p className="text-emerald-100 text-xs font-medium mt-1">Tu asistente financiero inteligente</p>
+          </div>
+          <h2 className="text-xl font-bold dark:text-white tracking-tight mt-6 px-4">
+            {authMode === 'login' ? '¡Hola de nuevo!' : 'Regístrate para empezar'}
           </h2>
         </div>
 
@@ -4182,6 +4206,7 @@ service cloud.firestore {
   }, [isLoading, user, view]);
 
   const renderHome = () => {
+    if (isLoading) return <HomeSkeleton />;
     if (!user) {
       return (
         <div className="flex flex-col items-center justify-center min-h-[50vh] gap-4">
@@ -4238,7 +4263,19 @@ service cloud.firestore {
 
     const renderEventList = (eventsToRender: any[], isRecentActivity: boolean = false, isSummaryExpanded: boolean = false) => {
       if (eventsToRender.length === 0) {
-        return <div className="p-12 text-center text-gray-400 italic text-xs sm:text-sm">No hay movimientos aún.</div>;
+        return (
+          <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
+            <div className="w-16 h-16 bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl flex items-center justify-center mb-4">
+              <Wallet size={28} className="text-emerald-500" />
+            </div>
+            <p className="font-semibold text-gray-700 dark:text-gray-300 mb-1">
+              Sin movimientos aún
+            </p>
+            <p className="text-xs text-gray-400 font-normal max-w-[200px] leading-relaxed">
+              Registra tu primer ingreso o gasto usando el campo de texto abajo
+            </p>
+          </div>
+        );
       }
 
       const getEventColor = (kind: string) => {
@@ -5310,8 +5347,8 @@ service cloud.firestore {
       {renderFilterBar()}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         {/* Balance by Account */}
-        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none min-w-0">
-          <h3 className="text-lg font-bold mb-6 dark:text-white">Saldos por Cuenta</h3>
+        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="bg-white dark:bg-gray-800 rounded-2xl p-5 border border-gray-100 dark:border-gray-800 shadow-sm min-w-0">
+          <h3 className="text-base font-bold dark:text-white mb-4 tracking-tight">Saldos por Cuenta</h3>
           <div className="w-full min-h-[300px] transition-all duration-300 ease-in-out" style={{ height: getChartHeight(analytics?.incomeByAccount || []) }}>
             <AnimatePresence mode="wait">
               {analytics ? (
@@ -5390,8 +5427,8 @@ service cloud.firestore {
         </motion.div>
 
         {/* Expenses by Category */}
-        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none min-w-0">
-          <h3 className="text-lg font-bold mb-6 dark:text-white">Salidas por Categoría</h3>
+        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="bg-white dark:bg-gray-800 rounded-2xl p-5 border border-gray-100 dark:border-gray-800 shadow-sm min-w-0">
+          <h3 className="text-base font-bold dark:text-white mb-4 tracking-tight">Salidas por Categoría</h3>
           <div className="w-full min-h-[300px] transition-all duration-300 ease-in-out" style={{ height: getChartHeight(analytics?.expensesByCategory || []) }}>
             <AnimatePresence mode="wait">
               {analytics ? (
@@ -5470,8 +5507,8 @@ service cloud.firestore {
         </motion.div>
 
         {/* Debts by Counterparty */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none md:col-span-2 min-w-0">
-          <h3 className="text-lg font-bold mb-6 dark:text-white">Deudas por Acreedor</h3>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-gray-800 rounded-2xl p-5 border border-gray-100 dark:border-gray-800 shadow-sm md:col-span-2 min-w-0">
+          <h3 className="text-base font-bold dark:text-white mb-4 tracking-tight">Deudas por Acreedor</h3>
           <div className="h-[300px] min-h-[300px] w-full flex items-center justify-center transition-all duration-300 ease-in-out">
             <AnimatePresence mode="wait">
               {analytics ? (
@@ -5539,8 +5576,8 @@ service cloud.firestore {
         </motion.div>
 
         {/* Loans by Debtor */}
-        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none min-w-0">
-          <h3 className="text-lg font-bold mb-6 dark:text-white">Préstamos por Cobrar</h3>
+        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="bg-white dark:bg-gray-800 rounded-2xl p-5 border border-gray-100 dark:border-gray-800 shadow-sm min-w-0">
+          <h3 className="text-base font-bold dark:text-white mb-4 tracking-tight">Préstamos por Cobrar</h3>
           <div className="h-[300px] min-h-[300px] w-full flex items-center justify-center transition-all duration-300 ease-in-out">
             <AnimatePresence mode="wait">
               {analytics ? (
@@ -5650,30 +5687,41 @@ service cloud.firestore {
 
         {goals.length === 0 && !isAddingGoal ? (
           <div className="bg-white dark:bg-gray-800 p-10 rounded-[2.5rem] text-center border border-dashed border-gray-200 dark:border-gray-700">
-            <div className="w-20 h-20 bg-emerald-50 dark:bg-emerald-900/20 rounded-full flex items-center justify-center text-emerald-600 dark:text-emerald-400 mx-auto mb-6">
-              <Target size={40} />
+            <div className="w-20 h-20 bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl flex items-center justify-center mx-auto mb-5">
+              <Target size={36} className="text-emerald-500" />
             </div>
-            <h3 className="text-xl font-bold dark:text-white mb-2">¿Cuál es tu próximo sueño?</h3>
-            <p className="text-gray-500 dark:text-gray-400 mb-8 max-w-xs mx-auto text-xs sm:text-sm">Crea tu primer objetivo y ContaBot te ayudará a darle seguimiento a tus ahorros.</p>
+            <h3 className="text-lg font-bold dark:text-white mb-2">
+              ¿Cuál es tu próximo sueño?
+            </h3>
+            <p className="text-sm text-gray-400 font-normal mb-8 max-w-xs mx-auto leading-relaxed">
+              Crea tu primera meta y ContaBot te ayudará a darle seguimiento a tus ahorros automáticamente
+            </p>
             <div className="grid grid-cols-2 gap-3">
               {GOAL_TEMPLATES.slice(0, 4).map((template, idx) => (
                 <button
                   key={idx}
                   onClick={() => {
-                    setGoalForm({ 
-                      name: template.name, 
-                      emoji: template.emoji, 
-                      color: template.color, 
+                    setGoalForm({
+                      name: template.name,
+                      emoji: template.emoji,
+                      color: template.color,
                       target_amount: template.target,
                       current_amount: 0,
                       deadline: ''
                     });
                     setIsAddingGoal(true);
                   }}
-                  className="p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 hover:border-emerald-500 transition-all text-left group"
+                  className="p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 hover:border-emerald-400 dark:hover:border-emerald-600 transition-all text-left group"
                 >
-                  <span className="text-2xl mb-2 block group-hover:scale-110 transition-transform">{template.emoji}</span>
-                  <p className="text-xs font-medium dark:text-white">{template.name}</p>
+                  <span className="text-2xl mb-2 block group-hover:scale-110 transition-transform">
+                    {template.emoji}
+                  </span>
+                  <p className="text-xs font-semibold dark:text-white leading-tight">
+                    {template.name}
+                  </p>
+                  <p className="text-[10px] text-gray-400 font-normal mt-0.5">
+                    ${formatAmount(template.target)}
+                  </p>
                 </button>
               ))}
             </div>
@@ -5692,86 +5740,98 @@ service cloud.firestore {
                 <motion.div
                   layout
                   key={goal.id}
-                  className="bg-white dark:bg-gray-800 rounded-[2rem] overflow-hidden shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none group"
+                  className="relative bg-white dark:bg-gray-900 rounded-2xl overflow-hidden shadow-sm border border-gray-100 dark:border-gray-800 group"
                 >
-                  <div className="p-6">
+                  {/* Barra de color superior basada en el color de la meta */}
+                  <div
+                    className="h-1.5 w-full"
+                    style={{ backgroundColor: goal.color }}
+                  />
+
+                  <div className="p-5">
+                    {/* Fila superior: emoji + nombre + acciones */}
                     <div className="flex items-start justify-between mb-4">
-                      <div className="flex items-center gap-4">
-                        <div 
-                          className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl shadow-inner"
-                          style={{ backgroundColor: `${goal.color}15` }}
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shadow-sm flex-shrink-0"
+                          style={{ backgroundColor: `${goal.color}20` }}
                         >
                           {goal.emoji}
                         </div>
-                        <div>
-                          <h3 className="font-black text-lg dark:text-white leading-tight">{goal.name}</h3>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">
-                              ${formatAmount(current_amount)} / ${formatAmount(goal.target_amount)}
-                            </span>
-                          </div>
+                        <div className="min-w-0">
+                          <h3 className="font-bold text-gray-900 dark:text-white text-base leading-tight truncate">
+                            {goal.name}
+                          </h3>
                           {goal.account_name && (
-                            <div className="mt-1">
-                              <span className="text-[10px] font-bold text-gray-500 bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded-md uppercase tracking-wider">
-                                Cuenta: {goal.account_name}
-                              </span>
-                            </div>
+                            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                              {goal.account_name}
+                            </span>
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button 
-                          onClick={() => {
-                            setGoalForm(goal);
-                            setIsAddingGoal(true);
-                          }}
-                          className="p-2 text-gray-400 hover:text-emerald-600 transition-colors"
+                      <div className="flex items-center gap-1 shrink-0 ml-2">
+                        <button
+                          onClick={() => { setGoalForm(goal); setIsAddingGoal(true); }}
+                          className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg transition-all"
                         >
-                          <Pencil size={16} />
+                          <Pencil size={14} />
                         </button>
-                        <button 
+                        <button
                           onClick={() => handleDeleteGoal(goal.id!)}
-                          className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-all"
                         >
-                          <Trash2 size={16} />
+                          <Trash2 size={14} />
                         </button>
                       </div>
                     </div>
 
-                    <div className="space-y-3">
-                      <div className="h-3 bg-gray-100 dark:bg-gray-900 rounded-full overflow-hidden">
-                        <motion.div 
-                          initial={{ width: 0 }}
-                          animate={{ width: `${progress}%` }}
-                          className="h-full rounded-full relative"
-                          style={{ backgroundColor: goal.color }}
-                        >
-                          <div className="absolute inset-0 bg-gradient-to-r from-transparent to-white/20 animate-pulse" />
-                        </motion.div>
+                    {/* Montos */}
+                    <div className="flex items-end justify-between mb-3">
+                      <div>
+                        <p className="text-2xl font-bold font-mono text-gray-900 dark:text-white">
+                          ${formatAmount(current_amount)}
+                        </p>
+                        <p className="text-xs text-gray-400 font-normal">
+                          de ${formatAmount(goal.target_amount)}
+                        </p>
                       </div>
-                      
-                      <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest">
-                        <span style={{ color: goal.color }}>{progress.toFixed(0)}% Completado</span>
-                        <span className="text-gray-400">Faltan ${formatAmount(Math.max(goal.target_amount - current_amount, 0))}</span>
+                      <div className="text-right">
+                        <p className="text-2xl font-bold" style={{ color: goal.color }}>
+                          {progress.toFixed(0)}%
+                        </p>
+                        <p className="text-xs text-gray-400 font-normal">completado</p>
                       </div>
                     </div>
 
-                    <div className="mt-6 flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
-                        <Clock size={14} />
-                        <span className="text-xs font-medium">
+                    {/* Barra de progreso */}
+                    <div className="h-2.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden mb-4">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${progress}%` }}
+                        transition={{ duration: 0.8, ease: "easeOut" }}
+                        className="h-full rounded-full"
+                        style={{ backgroundColor: goal.color }}
+                      />
+                    </div>
+
+                    {/* Footer: días restantes + estado */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-gray-400">
+                        <Clock size={12} />
+                        <span className="text-xs font-normal">
                           {daysLeft !== null ? `${daysLeft} días restantes` : 'Sin fecha límite'}
                         </span>
                       </div>
-                      
-                      {!isCompleted && (
-                        <div className="px-6 py-2.5 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-xl font-bold text-sm flex items-center gap-2">
-                          <Clock size={16} /> En progreso
+                      {isCompleted ? (
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 rounded-full text-xs font-semibold">
+                          <Trophy size={12} />
+                          Completada
                         </div>
-                      )}
-                      {isCompleted && (
-                        <div className="px-6 py-2.5 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-xl font-bold text-sm flex items-center gap-2">
-                          <Trophy size={16} /> Completada
+                      ) : (
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
+                          style={{ backgroundColor: `${goal.color}15`, color: goal.color }}
+                        >
+                          <span>${formatAmount(Math.max(goal.target_amount - current_amount, 0))} faltantes</span>
                         </div>
                       )}
                     </div>
@@ -6369,9 +6429,22 @@ service cloud.firestore {
         ) : (
           <div className="space-y-4">
             {displayAccounts.length === 0 ? (
-              <div className="text-center py-8 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700">
-                <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mb-2">No tienes cuentas configuradas</p>
-                <p className="text-xs text-gray-400">Agrega tus cuentas para que ContaBot las reconozca automáticamente.</p>
+              <div className="flex flex-col items-center justify-center py-10 px-6 text-center bg-gray-50 dark:bg-gray-900 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700">
+                <div className="w-14 h-14 bg-white dark:bg-gray-800 rounded-2xl flex items-center justify-center mb-4 shadow-sm">
+                  <CreditCard size={24} className="text-emerald-500" />
+                </div>
+                <p className="font-semibold text-gray-700 dark:text-gray-300 text-sm mb-1">
+                  Sin cuentas configuradas
+                </p>
+                <p className="text-xs text-gray-400 font-normal max-w-[220px] leading-relaxed mb-4">
+                  Agrega tus cuentas para que ContaBot las reconozca automáticamente al registrar movimientos
+                </p>
+                <button
+                  onClick={() => { setAccountForm({ id: '', name: '', type: 'debit', cards: '', interest_rate: '' }); setIsAddingAccount(true); }}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700 transition-all"
+                >
+                  + Agregar primera cuenta
+                </button>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -6486,12 +6559,15 @@ service cloud.firestore {
         )}
 
         {userCategories.length === 0 ? (
-          <div className="text-center py-8 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700">
-            <p className="text-gray-500 dark:text-gray-400 mb-1 text-xs sm:text-sm">
-              No hay categorías todavía
+          <div className="flex flex-col items-center justify-center py-10 px-6 text-center bg-gray-50 dark:bg-gray-900 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700">
+            <div className="w-14 h-14 bg-white dark:bg-gray-800 rounded-2xl flex items-center justify-center mb-4 shadow-sm">
+              <PieChartIcon size={24} className="text-emerald-500" />
+            </div>
+            <p className="font-semibold text-gray-700 dark:text-gray-300 text-sm mb-1">
+              Sin categorías todavía
             </p>
-            <p className="text-xs text-gray-400">
-              ContaBot las crea automáticamente cuando registras movimientos
+            <p className="text-xs text-gray-400 font-normal max-w-[220px] leading-relaxed">
+              ContaBot las crea automáticamente cuando registras movimientos, o puedes agregarlas manualmente
             </p>
           </div>
         ) : (
@@ -6831,17 +6907,21 @@ service cloud.firestore {
       <div className="min-h-screen bg-[#e8ebf0] dark:bg-gray-950 flex flex-col transition-colors duration-300 pb-[env(safe-area-inset-bottom)]">
       {/* Header */}
       {view !== 'auth' && (
-        <header className="bg-white dark:bg-gray-900 border-b border-gray-200/60 dark:border-gray-800 px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 flex justify-between items-center sticky top-0 z-40 transition-colors duration-300 shadow-[0_1px_12px_rgba(0,0,0,0.06)] dark:shadow-none">
-          <div className="flex items-center gap-2">
-            <img src={APP_LOGO} alt="Logo" className="w-8 h-8 rounded-lg object-cover" referrerPolicy="no-referrer" />
-            <h1 className="text-xl font-black tracking-tight dark:text-white">ContaBot</h1>
+        <div className="flex items-center justify-between px-5 pt-5 pb-3 sticky top-0 z-40 bg-white dark:bg-gray-900 transition-colors duration-300">
+          <div className="flex items-center gap-2.5">
+            <img src={APP_LOGO} alt="ContaBot" className="w-8 h-8 rounded-xl" />
+            <span className="font-bold text-base tracking-tight dark:text-white">
+              ContaBot
+            </span>
           </div>
-          <div className="flex items-center gap-4">
-            <button onClick={toggleTheme} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors">
-              {isDarkMode ? <Sun className="text-amber-400" /> : <Moon className="text-gray-400" />}
-            </button>
-          </div>
-        </header>
+
+          <button
+            onClick={toggleTheme}
+            className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-all duration-200"
+          >
+            {isDarkMode ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+        </div>
       )}
       
       {/* Success Toast */}
@@ -7033,49 +7113,41 @@ service cloud.firestore {
 
       {/* Navigation Bar */}
       {view !== 'auth' && (
-        <nav className={cn(
-          "fixed left-1/2 -translate-x-1/2 bg-white/85 dark:bg-gray-900/90 backdrop-blur-xl border border-gray-200/70 dark:border-gray-800 px-2 py-2 rounded-3xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] dark:shadow-2xl z-30 flex gap-1 transition-all duration-300",
+        <div className={cn(
+          "fixed left-0 right-0 z-50 flex justify-center px-4 pb-5 transition-all duration-300",
           view === 'home' 
-            ? (isNavVisible ? 'bottom-[calc(6rem+env(safe-area-inset-bottom))]' : '-bottom-[calc(6rem+env(safe-area-inset-bottom))]') 
-            : (isNavVisible ? 'bottom-[calc(2rem+env(safe-area-inset-bottom))]' : '-bottom-[calc(6rem+env(safe-area-inset-bottom))]')
+            ? (isNavVisible ? 'bottom-[calc(4.75rem+env(safe-area-inset-bottom))]' : '-bottom-32') 
+            : (isNavVisible ? 'bottom-0' : '-bottom-32')
         )}>
-          <button 
-            onClick={() => setView('home')}
-            className={cn(
-              "flex items-center gap-2 px-4 sm:px-6 py-3 rounded-2xl font-bold transition-all",
-              view === 'home' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-200 dark:shadow-none' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
-            )}
-          >
-            <HomeIcon size={20} /> <span className="hidden md:inline">Inicio</span>
-          </button>
-          <button 
-            onClick={() => setView('analytics')}
-            className={cn(
-              "flex items-center gap-2 px-4 sm:px-6 py-3 rounded-2xl font-bold transition-all",
-              view === 'analytics' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-200 dark:shadow-none' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
-            )}
-          >
-            <PieChartIcon size={20} /> <span className="hidden md:inline">Análisis</span>
-          </button>
-          <button 
-            onClick={() => setView('goals')}
-            className={cn(
-              "flex items-center gap-2 px-4 sm:px-6 py-3 rounded-2xl font-bold transition-all",
-              view === 'goals' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-200 dark:shadow-none' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
-            )}
-          >
-            <Target size={20} /> <span className="hidden md:inline">Objetivos</span>
-          </button>
-          <button 
-            onClick={() => setView('settings')}
-            className={cn(
-              "flex items-center gap-2 px-4 sm:px-6 py-3 rounded-2xl font-bold transition-all",
-              view === 'settings' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-200 dark:shadow-none' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
-            )}
-          >
-            <SettingsIcon size={20} /> <span className="hidden md:inline">Ajustes</span>
-          </button>
-        </nav>
+          <div className="flex items-center gap-1 bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-3xl px-2 py-2 shadow-xl shadow-black/10">
+            {[
+              { id: 'home', label: 'Inicio', icon: HomeIcon },
+              { id: 'analytics', label: 'Análisis', icon: PieChartIcon },
+              { id: 'goals', label: 'Objetivos', icon: Target },
+              { id: 'settings', label: 'Ajustes', icon: SettingsIcon },
+            ].map((tab) => {
+              const isActive = view === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setView(tab.id as View)}
+                  className={`flex flex-col items-center justify-center rounded-2xl transition-all duration-200 ${
+                    isActive
+                      ? 'bg-emerald-500 text-white px-5 py-2.5 gap-1'
+                      : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-4 py-2.5 gap-1'
+                  }`}
+                >
+                  <tab.icon size={20} strokeWidth={isActive ? 2.5 : 1.8} />
+                  {isActive && (
+                    <span className="text-[10px] font-semibold leading-none">
+                      {tab.label}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {/* Input Bar (Only visible on Home) */}

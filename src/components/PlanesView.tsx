@@ -95,180 +95,167 @@ export default function PlanesView({ userId, onBack }: PlanesViewProps) {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-gray-50 dark:bg-gray-950 min-h-screen">
-      <div className="sticky top-0 z-10 bg-gray-50 dark:bg-gray-950 px-4 pt-6 pb-2 flex items-center gap-3">
+    <div className="flex flex-col min-h-screen bg-gray-50 dark:bg-gray-950">
+      {/* Header */}
+      <div className="px-4 pt-6 pb-2 flex items-center gap-3 bg-gray-50 dark:bg-gray-950 sticky top-0 z-10">
         {onBack && (
           <button onClick={onBack} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-all text-gray-500">
             <ArrowLeft size={20} />
           </button>
         )}
         <div>
-          <h1 className="text-2xl font-black text-gray-900 dark:text-white">Planes</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Elige el plan que mejor se adapte a ti</p>
+          <h1 className="text-lg font-bold text-gray-900 dark:text-white">Elige tu plan</h1>
+          <p className="text-xs text-gray-500 dark:text-gray-400">Cancela cuando quieras</p>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 pb-10 pt-4 flex flex-col gap-5 max-w-lg mx-auto w-full">
+      <div className="flex-1 px-4 pb-10 pt-2 flex flex-col gap-4 max-w-lg mx-auto w-full">
 
+        {/* Banner Premium activo */}
         {isPremium && (
-          <div className="flex flex-col gap-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-2xl p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-emerald-100 dark:bg-emerald-900/40 rounded-xl">
-                <Crown size={20} className="text-emerald-600 dark:text-emerald-400" />
-              </div>
-              <div>
-                <p className="font-bold text-emerald-700 dark:text-emerald-400">¡Ya eres Premium! 🎉</p>
-                {premiumUntil && (
-                  <p className="text-xs text-emerald-600 dark:text-emerald-500">
-                    Activo hasta: {new Date(premiumUntil).toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric" })}
-                  </p>
-                )}
-              </div>
+          <div className="flex items-center gap-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-2xl p-4">
+            <div className="p-2 bg-emerald-100 dark:bg-emerald-900/40 rounded-xl">
+              <Crown size={20} className="text-emerald-600 dark:text-emerald-400" />
             </div>
-            <button 
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-emerald-700 dark:text-emerald-400 text-sm">¡Ya eres Premium! 🎉</p>
+              {premiumUntil && (
+                <p className="text-xs text-emerald-600 dark:text-emerald-500 truncate">
+                  Activo hasta: {new Date(premiumUntil).toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric" })}
+                </p>
+              )}
+            </div>
+            <button
               onClick={() => {
-                setLoading(true);
                 fetch(`/api/user/subscription/${userId}`)
                   .then(r => r.json())
                   .then(data => {
                     setIsPremium(data.isPremium);
                     setPremiumUntil(data.premiumUntil);
-                    setLoading(false);
                   });
               }}
-              className="text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline text-left ml-12"
+              className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline shrink-0"
             >
-              ¿Acabas de pagar? Haz clic aquí para actualizar
+              Actualizar
             </button>
           </div>
         )}
 
+        {/* Toggle billing */}
         <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-2xl">
           <button
             onClick={() => setBillingPeriod("mensual")}
-            className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all ${billingPeriod === "mensual" ? "bg-white dark:bg-gray-700 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"}`}
+            className={`flex-1 py-2.5 text-sm font-semibold rounded-xl transition-all ${billingPeriod === "mensual" ? "bg-white dark:bg-gray-700 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-gray-500"}`}
           >
             Mensual
           </button>
           <button
             onClick={() => setBillingPeriod("anual")}
-            className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all ${billingPeriod === "anual" ? "bg-white dark:bg-gray-700 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"}`}
+            className={`flex-1 py-2.5 text-sm font-semibold rounded-xl transition-all flex items-center justify-center gap-2 ${billingPeriod === "anual" ? "bg-white dark:bg-gray-700 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-gray-500"}`}
           >
             Anual
+            <span className="text-[10px] font-bold bg-emerald-500 text-white px-2 py-0.5 rounded-full">-25%</span>
           </button>
         </div>
 
-        <div className="bg-white dark:bg-gray-900 rounded-[1.5rem] border border-gray-100 dark:border-gray-800 p-6 shadow-sm">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2.5 bg-gray-100 dark:bg-gray-800 rounded-xl"><Zap size={20} className="text-gray-500" /></div>
-            <div>
-              <h2 className="font-black text-gray-900 dark:text-white text-lg">Gratis</h2>
-              <p className="text-xs text-gray-400">Para empezar a organizarte</p>
-            </div>
-            <div className="ml-auto text-right">
-              <span className="text-2xl font-black text-gray-900 dark:text-white">$0</span>
-              <span className="text-sm text-gray-400"> /mes</span>
-            </div>
-          </div>
-          <ul className="flex flex-col gap-2.5">
-            {beneficiosFree.map((b) => (
-              <li key={b} className="flex items-center gap-2.5 text-sm text-gray-600 dark:text-gray-400">
-                <div className="w-4 h-4 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0">
-                  <Check size={10} className="text-gray-500" />
-                </div>
-                {b}
-              </li>
-            ))}
-          </ul>
-          {!isPremium && (
-            <div className="mt-5 flex flex-col gap-3">
-              <div className="w-full py-3 rounded-full border-2 border-gray-200 dark:border-gray-700 text-center text-sm font-bold text-gray-400">
-                Plan actual
-              </div>
-              <button 
-                onClick={() => {
-                  setLoading(true);
-                  fetch(`/api/user/subscription/${userId}`)
-                    .then(r => r.json())
-                    .then(data => {
-                      setIsPremium(data.isPremium);
-                      setPremiumUntil(data.premiumUntil);
-                      setLoading(false);
-                    });
-                }}
-                className="text-xs font-bold text-gray-500 dark:text-gray-400 hover:underline text-center"
-              >
-                ¿Ya pagaste? Haz clic aquí para verificar tu estado
-              </button>
-            </div>
-          )}
-        </div>
+        {/* Plan PRO — protagonista */}
+        <div className="relative bg-emerald-600 rounded-3xl overflow-hidden shadow-2xl shadow-emerald-500/30">
+          {/* Círculos decorativos */}
+          <div className="absolute top-0 right-0 w-48 h-48 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2 pointer-events-none" />
+          <div className="absolute bottom-0 left-0 w-32 h-32 bg-white/5 rounded-full translate-y-1/2 -translate-x-1/2 pointer-events-none" />
 
-        <div className="relative bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-[1.5rem] p-6 pt-12 shadow-xl shadow-emerald-500/20 overflow-hidden">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2" />
-          <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/5 rounded-full translate-y-1/2 -translate-x-1/2" />
-          <div className="absolute top-0 left-0 bg-white/20 backdrop-blur-sm text-white text-xs font-black px-4 py-2 rounded-br-2xl flex items-center gap-1 z-10">
-            <Star size={10} fill="white" /> Popular
-          </div>
-          <div className="flex items-center gap-3 mb-5 relative">
-            <div className="p-2.5 bg-white/20 rounded-xl"><Crown size={20} className="text-white" /></div>
-            <div>
-              <h2 className="font-black text-white text-lg">ContaBot Pro</h2>
-              <p className="text-xs text-emerald-100">Todo incluido</p>
+          <div className="relative p-6">
+            {/* Badge popular */}
+            <div className="inline-flex items-center gap-1.5 bg-white/20 backdrop-blur-sm text-white text-xs font-bold px-3 py-1.5 rounded-full mb-4">
+              <Star size={10} fill="white" />
+              Más popular
             </div>
-            <div className="ml-auto text-right relative">
-              {billingPeriod === "anual" ? (
-                <>
-                  <div className="flex items-end gap-1 justify-end">
-                    <span className="text-2xl font-black text-white">$59</span>
-                    <span className="text-sm text-emerald-100 mb-0.5">/mes</span>
+
+            {/* Precio */}
+            <div className="flex items-end gap-2 mb-1">
+              <span className="text-5xl font-black text-white">
+                ${billingPeriod === "anual" ? "59" : "79"}
+              </span>
+              <span className="text-emerald-200 text-sm font-medium mb-2">/mes</span>
+            </div>
+            {billingPeriod === "anual" && (
+              <p className="text-emerald-200 text-xs font-medium mb-4">$708 al año · Ahorras $240</p>
+            )}
+
+            <p className="text-white font-bold text-lg mb-1">ContaBot Pro</p>
+            <p className="text-emerald-100 text-xs font-normal mb-6">Todo incluido, sin límites</p>
+
+            {/* Beneficios */}
+            <div className="flex flex-col gap-2.5 mb-6">
+              {beneficiosPremium.map((b) => (
+                <div key={b} className="flex items-start gap-2.5">
+                  <div className="w-4 h-4 rounded-full bg-white/25 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Check size={9} className="text-white" strokeWidth={3} />
                   </div>
-                  <p className="text-xs text-emerald-100">$708/año</p>
-                </>
-              ) : (
-                <div className="flex items-end gap-1 justify-end">
-                  <span className="text-2xl font-black text-white">$79</span>
-                  <span className="text-sm text-emerald-100 mb-0.5">/mes</span>
+                  <span className="text-sm text-white/90 font-normal leading-snug">{b}</span>
                 </div>
-              )}
+              ))}
+            </div>
+
+            {/* Error */}
+            {error && (
+              <div className="mb-3 p-3 bg-red-500/20 border border-red-400/30 rounded-xl text-white text-xs font-medium">
+                ⚠️ {error}
+              </div>
+            )}
+
+            {/* CTA */}
+            {isPremium ? (
+              <div className="w-full py-4 rounded-2xl bg-white/20 text-center text-white font-bold text-sm">
+                ✅ Plan activo
+              </div>
+            ) : (
+              <button
+                onClick={handleSubscribe}
+                disabled={checkoutLoading}
+                className="w-full py-4 rounded-2xl bg-white text-emerald-600 font-bold text-sm shadow-lg active:scale-[0.98] transition-all hover:shadow-xl disabled:opacity-70 flex items-center justify-center gap-2"
+              >
+                {checkoutLoading ? (
+                  <><Loader2 size={16} className="animate-spin" />Procesando...</>
+                ) : (
+                  <>{billingPeriod === "mensual" ? "Suscribirme por $79/mes" : "Suscribirme por $59/mes"}</>
+                )}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Plan Gratuito — discreto */}
+        <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <p className="font-bold text-gray-900 dark:text-white text-sm">Plan Gratuito</p>
+              <p className="text-xs text-gray-400 font-normal">Para empezar a organizarte</p>
+            </div>
+            <div className="text-right">
+              <span className="text-xl font-bold text-gray-900 dark:text-white">$0</span>
+              <span className="text-xs text-gray-400"> /mes</span>
             </div>
           </div>
-          <ul className="flex flex-col gap-2.5 relative mb-6">
-            {beneficiosPremium.map((b) => (
-              <li key={b} className="flex items-center gap-2.5 text-sm text-white">
-                <div className="w-4 h-4 rounded-full bg-white/25 flex items-center justify-center flex-shrink-0">
-                  <Check size={10} className="text-white" strokeWidth={3} />
+          <div className="flex flex-col gap-2">
+            {beneficiosFree.map((b) => (
+              <div key={b} className="flex items-center gap-2.5 text-xs text-gray-500 dark:text-gray-400">
+                <div className="w-3.5 h-3.5 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0">
+                  <Check size={8} className="text-gray-400" />
                 </div>
                 {b}
-              </li>
+              </div>
             ))}
-          </ul>
-          {error && (
-            <div className="mb-3 p-3 bg-red-500/20 border border-red-400/30 rounded-xl text-white text-xs font-medium">
-              ⚠️ {error}
+          </div>
+          {!isPremium && (
+            <div className="mt-4 w-full py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 text-center text-xs font-semibold text-gray-400">
+              Plan actual
             </div>
-          )}
-          {isPremium ? (
-            <div className="relative w-full py-3.5 rounded-full bg-white/20 text-center text-white font-black text-sm">
-              ✅ Plan activo
-            </div>
-          ) : (
-            <button
-              onClick={handleSubscribe}
-              disabled={checkoutLoading}
-              className="relative w-full py-3.5 rounded-full bg-white text-emerald-600 font-black text-sm shadow-lg active:scale-[0.98] transition-all hover:shadow-xl disabled:opacity-70 flex items-center justify-center gap-2"
-            >
-              {checkoutLoading ? (
-                <><Loader2 size={16} className="animate-spin" />Procesando...</>
-              ) : (
-                <><Crown size={16} />{billingPeriod === "mensual" ? "Suscribirme por $79/mes" : "Suscribirme por $59/mes"}</>
-              )}
-            </button>
           )}
         </div>
 
-        <p className="text-center text-xs text-gray-400 dark:text-gray-600 pb-2">
-          🔒 Pago seguro procesado por Stripe. Cancela cuando quieras.
+        <p className="text-center text-xs text-gray-400 dark:text-gray-600">
+          🔒 Pago seguro procesado por Stripe
         </p>
       </div>
     </div>

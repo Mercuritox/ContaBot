@@ -43,7 +43,50 @@ if (admin.apps.length === 0) {
 }
 const firestore = admin.firestore();
 
-function calculateDailyInterest() {
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | null;
+    email: string | null;
+    emailVerified: boolean | null;
+    isAnonymous: boolean | null;
+    tenantId: string | null;
+    providerInfo: any[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null, userId: string | null = null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: userId,
+      email: null,
+      emailVerified: null,
+      isAnonymous: null,
+      tenantId: null,
+      providerInfo: []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  // In the backend, we might not want to throw and crash the whole request if it's a background sync,
+  // but for API calls we should probably let the caller know.
+  throw new Error(JSON.stringify(errInfo));
+}
+
+async function calculateDailyInterest() {
   console.log("Calculando intereses diarios...");
   const today = new Date().toISOString().split('T')[0];
   
@@ -90,19 +133,49 @@ function calculateDailyInterest() {
           
           if (dailyInterest > 0) {
             const eventId = "int_" + Date.now() + "_" + Math.random().toString(36).substring(7);
+            const occurred_at = new Date().toISOString();
+            const eventData = {
+              id: eventId,
+              user_id: user.id,
+              amount: parseFloat(dailyInterest.toFixed(2)),
+              description: "Interés generado automáticamente",
+              category: "Interés",
+              kind: "income",
+              occurred_at: occurred_at,
+              account_name: account.name,
+              currency: "MXN",
+              timezone: "UTC",
+              merchant: { name: account.name },
+              accounts: { to_account_ref: { name: account.name } }
+            };
+
             insertEvent.run(
               eventId,
               user.id,
-              dailyInterest.toFixed(2),
-              "Interés generado automáticamente",
-              "Interés",
-              "income",
-              new Date().toISOString(),
-              account.name,
-              "MXN",
-              "UTC"
+              eventData.amount,
+              eventData.description,
+              eventData.category,
+              eventData.kind,
+              eventData.occurred_at,
+              eventData.account_name,
+              eventData.currency,
+              eventData.timezone
             );
-            console.log(`Interés generado para ${user.id} en ${account.name}: ${dailyInterest}`);
+
+            // Sync to Firestore
+            try {
+              const docPath = `events/${eventId}`;
+              await firestore.doc(docPath).set({
+                ...eventData,
+                user_id: user.id,
+                updated_at: admin.firestore.FieldValue.serverTimestamp()
+              });
+              console.log(`✅ Interés sincronizado a Firestore para ${user.id}: ${account.name}`);
+            } catch (error) {
+              console.error(`❌ Error sincronizando interés a Firestore para ${user.id}:`, error);
+            }
+
+            console.log(`💰 Interés aplicado a ${user.id} - ${account.name}: $${dailyInterest.toFixed(2)}`);
           }
         }
       }
@@ -635,7 +708,7 @@ async function startServer() {
   });
 
   // API Routes
-  app.post("/api/events/sync", express.json({ limit: '50mb' }), (req, res) => {
+  app.post("/api/events/sync", express.json({ limit: '50mb' }), async (req, res) => {
     const { events } = req.body;
     if (!Array.isArray(events)) {
       return res.status(400).json({ error: "Invalid events array" });
@@ -686,20 +759,25 @@ async function startServer() {
           );
         }
       })();
+
+      // Sync to Firestore (outside transaction)
+      for (const ev of events) {
+        if (ev.user_id) {
+          try {
+            const docPath = `events/${ev.id}`;
+            await firestore.doc(docPath).set({
+              ...ev,
+              updated_at: admin.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+          } catch (error) {
+            console.error(`Error syncing event ${ev.id} to Firestore:`, error);
+          }
+        }
+      }
+
       res.json({ success: true, count: events.length });
     } catch (err) {
       console.error("Error syncing events:", err);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
-
-  app.delete("/api/events/:id", (req, res) => {
-    const { id } = req.params;
-    try {
-      db.prepare("DELETE FROM events WHERE id = ?").run(id);
-      res.json({ success: true });
-    } catch (err) {
-      console.error("Error deleting event:", err);
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -726,7 +804,7 @@ async function startServer() {
     return s.charAt(0).toUpperCase() + s.slice(1);
   };
 
-  app.post("/api/events", (req, res) => {
+  app.post("/api/events", async (req, res) => {
     const data = req.body;
     const userIdRaw = req.query.userId as string;
     let userId = (userIdRaw && userIdRaw !== '' && userIdRaw !== 'null' && userIdRaw !== 'undefined') ? userIdRaw : null;
@@ -790,6 +868,21 @@ async function startServer() {
           data.target.event_id
         );
 
+        // Sync to Firestore
+        if (userId) {
+          const docPath = `events/${data.target.event_id}`;
+          try {
+            await firestore.doc(docPath).set({
+              ...eventData,
+              id: data.target.event_id,
+              user_id: userId,
+              updated_at: admin.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+          } catch (error) {
+            handleFirestoreError(error, OperationType.WRITE, docPath, userId);
+          }
+        }
+
         return res.json({ success: true });
       }
 
@@ -839,14 +932,30 @@ async function startServer() {
         accountName || 'Efectivo',
         JSON.stringify(event)
       );
-      res.status(201).json({ success: true });
+
+      // Sync to Firestore
+      if (userId) {
+        const docPath = `events/${eventId}`;
+        try {
+          await firestore.doc(docPath).set({
+            ...event,
+            id: eventId,
+            user_id: userId,
+            updated_at: admin.firestore.FieldValue.serverTimestamp()
+          });
+        } catch (error) {
+          handleFirestoreError(error, OperationType.CREATE, docPath, userId);
+        }
+      }
+
+      res.status(201).json({ success: true, id: eventId });
     } catch (error: any) {
       console.error("Error processing event:", error);
       res.status(500).json({ error: `Error al procesar el movimiento: ${error.message}` });
     }
   });
 
-  app.put("/api/events/:id", (req, res) => {
+  app.put("/api/events/:id", async (req, res) => {
     const { id } = req.params;
     const data = req.body;
     const userId = (req.query.userId as string) || null;
@@ -889,6 +998,21 @@ async function startServer() {
         id
       );
 
+      // Sync to Firestore
+      if (userId) {
+        const docPath = `events/${id}`;
+        try {
+          await firestore.doc(docPath).set({
+            ...updatedEvent,
+            id: id,
+            user_id: userId,
+            updated_at: admin.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+        } catch (error) {
+          handleFirestoreError(error, OperationType.UPDATE, docPath, userId);
+        }
+      }
+
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error updating event:", error);
@@ -896,7 +1020,7 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/events/:id", (req, res) => {
+  app.delete("/api/events/:id", async (req, res) => {
     const { id } = req.params;
     const userId = (req.query.userId as string) || null;
 
@@ -908,6 +1032,16 @@ async function startServer() {
         return res.status(404).json({ error: "Movimiento no encontrado o no autorizado" });
       }
 
+      // Sync to Firestore
+      if (userId) {
+        const docPath = `events/${id}`;
+        try {
+          await firestore.doc(docPath).delete();
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, docPath, userId);
+        }
+      }
+
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error deleting event:", error);
@@ -915,7 +1049,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/analytics", (req, res) => {
+  app.get("/api/analytics", async (req, res) => {
     const userId = (req.query.userId as string) || null;
     const startDate = (req.query.startDate as string) || '1970-01-01';
     const endDate = (req.query.endDate as string) || '9999-12-31';
@@ -974,7 +1108,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/summary", (req, res) => {
+  app.get("/api/summary", async (req, res) => {
     const userId = (req.query.userId as string) || null;
     const startDate = (req.query.startDate as string) || '1970-01-01';
     const endDate = (req.query.endDate as string) || '9999-12-31';
@@ -1029,7 +1163,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/goals", (req, res) => {
+  app.post("/api/goals", async (req, res) => {
     const { userId, name, emoji, color, target_amount, current_amount, deadline, account_name } = req.body;
     const id = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
     
@@ -1042,7 +1176,22 @@ async function startServer() {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(id, userId || null, name, emoji, color, target_amount, current_amount || 0, deadline, account_name || null);
       
-      const goal = db.prepare("SELECT * FROM goals WHERE id = ?").get(id);
+      const goal = db.prepare("SELECT * FROM goals WHERE id = ?").get(id) as any;
+
+      // Sync to Firestore
+      if (userId) {
+        const docPath = `goals/${id}`;
+        try {
+          await firestore.doc(docPath).set({
+            ...goal,
+            user_id: userId,
+            created_at: admin.firestore.FieldValue.serverTimestamp()
+          });
+        } catch (error) {
+          handleFirestoreError(error, OperationType.CREATE, docPath, userId);
+        }
+      }
+
       res.status(201).json(goal);
     } catch (err) {
       console.error("Error creating goal:", err);
@@ -1050,9 +1199,9 @@ async function startServer() {
     }
   });
 
-  app.patch("/api/goals/:id", (req, res) => {
+  app.patch("/api/goals/:id", async (req, res) => {
     const { id } = req.params;
-    const { current_amount, name, emoji, color, target_amount, deadline, completed_at, account_name } = req.body;
+    const { current_amount, name, emoji, color, target_amount, deadline, completed_at, account_name, userId } = req.body;
     
     try {
       const existing = db.prepare("SELECT * FROM goals WHERE id = ?").get(id) as any;
@@ -1072,7 +1221,23 @@ async function startServer() {
       `);
       
       stmt.run(current_amount, name, emoji, color, target_amount, deadline, completed_at, account_name, id);
-      const updated = db.prepare("SELECT * FROM goals WHERE id = ?").get(id);
+      const updated = db.prepare("SELECT * FROM goals WHERE id = ?").get(id) as any;
+
+      // Sync to Firestore
+      const effectiveUserId = userId || updated.user_id;
+      if (effectiveUserId) {
+        const docPath = `goals/${id}`;
+        try {
+          await firestore.doc(docPath).set({
+            ...updated,
+            user_id: effectiveUserId,
+            updated_at: admin.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+        } catch (error) {
+          handleFirestoreError(error, OperationType.UPDATE, docPath, effectiveUserId);
+        }
+      }
+
       res.json(updated);
     } catch (err) {
       console.error("Error updating goal:", err);
@@ -1080,10 +1245,22 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/goals/:id", (req, res) => {
+  app.delete("/api/goals/:id", async (req, res) => {
     const { id } = req.params;
+    const userId = req.query.userId as string;
     try {
       db.prepare("DELETE FROM goals WHERE id = ?").run(id);
+
+      // Sync to Firestore
+      if (userId) {
+        const docPath = `goals/${id}`;
+        try {
+          await firestore.doc(docPath).delete();
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, docPath, userId);
+        }
+      }
+
       res.json({ success: true });
     } catch (err) {
       console.error("Error deleting goal:", err);
@@ -1091,7 +1268,7 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/events", (req, res) => {
+  app.delete("/api/events", async (req, res) => {
     const userId = req.query.userId as string;
     if (!userId) {
       return res.status(400).json({ error: "userId requerido" });
@@ -1099,6 +1276,29 @@ async function startServer() {
     try {
       db.prepare("DELETE FROM events WHERE user_id = ?").run(userId);
       db.prepare("DELETE FROM goals WHERE user_id = ?").run(userId);
+
+      // Sync to Firestore: Delete all events and goals for the user
+      // Note: Firestore doesn't support bulk delete by query easily without a loop or cloud function
+      // For simplicity, we'll try to delete the collections if possible, but usually we'd need to list and delete.
+      // Given the rules, we can't easily delete everything from the server without listing.
+      // However, we can at least try to delete the user document if it exists.
+      try {
+        // Delete events
+        const eventsRef = firestore.collection('events');
+        const eventsSnapshot = await eventsRef.where('user_id', '==', userId).get();
+        const batch = firestore.batch();
+        eventsSnapshot.forEach(doc => batch.delete(doc.ref));
+        
+        // Delete goals
+        const goalsRef = firestore.collection('goals');
+        const goalsSnapshot = await goalsRef.where('user_id', '==', userId).get();
+        goalsSnapshot.forEach(doc => batch.delete(doc.ref));
+
+        await batch.commit();
+      } catch (error) {
+        console.error("Error deleting Firestore data for user:", error);
+      }
+
       res.json({ success: true });
     } catch (err) {
       console.error("Error deleting user data:", err);
