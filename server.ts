@@ -43,14 +43,16 @@ if (admin.apps.length === 0) {
 }
 const firestore = admin.firestore();
 
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
+const OperationType = {
+  CREATE: 'create',
+  UPDATE: 'update',
+  DELETE: 'delete',
+  LIST: 'list',
+  GET: 'get',
+  WRITE: 'write',
+} as const;
+
+type OperationType = typeof OperationType[keyof typeof OperationType];
 
 interface FirestoreErrorInfo {
   error: string;

@@ -2418,11 +2418,16 @@ service cloud.firestore {
           eventsToSync.push({ id: doc.id, ...doc.data() });
         });
         if (eventsToSync.length > 0) {
-          fetch('/api/events/sync', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ events: eventsToSync })
-          }).catch(e => console.error("Error syncing events to SQLite:", e));
+          // Chunk events to avoid large payloads and potential timeouts
+          const chunkSize = 500;
+          for (let i = 0; i < eventsToSync.length; i += chunkSize) {
+            const chunk = eventsToSync.slice(i, i + chunkSize);
+            fetch('/api/events/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ events: chunk })
+            }).catch(e => console.error("Error syncing events to SQLite:", e));
+          }
         }
       } catch (e) {
         console.error("Error preparing events for sync:", e);
@@ -4692,19 +4697,19 @@ service cloud.firestore {
                   )}
 
                   {proposal?.result?.create?.event && (
-                <div className="grid grid-cols-2 gap-6">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs font-semibold text-gray-400 uppercase">Concepto</label>
-                    <p className="text-lg font-medium dark:text-white">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 block">Concepto</label>
+                    <p className="text-base font-bold dark:text-white leading-tight">
                       {proposal?.result?.create?.event?.description || 
                        proposal?.result?.create?.event?.merchant?.name || 
                        'Sin descripción'}
                     </p>
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-gray-400 uppercase">Monto</label>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 block">Monto</label>
                     <p className={cn(
-                      "text-lg font-mono font-bold",
+                      "text-base font-bold dark:text-white leading-tight",
                       ['income', 'refund', 'debt_increase', 'loan_given'].includes(proposal?.result?.create?.event?.kind || '') 
                         ? 'text-emerald-600' 
                         : ['expense', 'debt_payment', 'loan_repayment_received', 'loss'].includes(proposal?.result?.create?.event?.kind || '')
@@ -4717,14 +4722,14 @@ service cloud.firestore {
                     </p>
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-gray-400 uppercase">Categoría</label>
-                    <p className="text-sm bg-gray-100 dark:bg-gray-700 dark:text-gray-300 inline-block px-2 py-1 rounded-md">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 block">Categoría</label>
+                    <p className="text-base font-bold dark:text-white leading-tight">
                       {proposal?.result?.create?.event?.category || 'Sin categoría'}
                     </p>
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-gray-400 uppercase">{isTransferProposal ? 'Cuenta Origen' : 'Cuenta'}</label>
-                    <p className="text-sm flex items-center gap-1 dark:text-gray-300">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 block">{isTransferProposal ? 'Cuenta Origen' : 'Cuenta'}</label>
+                    <p className="text-base font-bold dark:text-white leading-tight flex items-center gap-1">
                       <CreditCard size={14} /> 
                       {proposal?.result?.create?.event?.accounts?.primary_account_ref?.name || 
                        (typeof proposal?.result?.create?.event?.accounts?.primary_account_ref === 'string' ? proposal?.result?.create?.event?.accounts?.primary_account_ref : 'Por definir')}
@@ -4732,8 +4737,8 @@ service cloud.firestore {
                   </div>
                   {isTransferProposal && (
                     <div>
-                      <label className="text-xs font-semibold text-gray-400 uppercase">Cuenta Destino</label>
-                      <p className="text-sm flex items-center gap-1 dark:text-gray-300">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 block">Cuenta Destino</label>
+                      <p className="text-base font-bold dark:text-white leading-tight flex items-center gap-1">
                         <CreditCard size={14} /> 
                         {proposal?.pending_proposals?.[transferProposalIndex]?.result?.create?.event?.accounts?.primary_account_ref?.name || 
                          (typeof proposal?.pending_proposals?.[transferProposalIndex]?.result?.create?.event?.accounts?.primary_account_ref === 'string' ? proposal?.pending_proposals?.[transferProposalIndex]?.result?.create?.event?.accounts?.primary_account_ref : 'Por definir')}
@@ -4744,32 +4749,32 @@ service cloud.firestore {
               )}
 
               {proposal?.result?.create_goal?.goal && (
-                <div className="grid grid-cols-2 gap-6">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs font-semibold text-gray-400 uppercase">Objetivo</label>
-                    <p className="text-lg font-medium dark:text-white flex items-center gap-2">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 block">Objetivo</label>
+                    <p className="text-base font-bold dark:text-white leading-tight flex items-center gap-2">
                       <span>{proposal.result.create_goal.goal.emoji || '🎯'}</span>
                       {proposal.result.create_goal.goal.name || 'Sin nombre'}
                     </p>
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-gray-400 uppercase">Monto Objetivo</label>
-                    <p className="text-lg font-mono font-bold text-emerald-600">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 block">Monto Objetivo</label>
+                    <p className="text-base font-bold dark:text-white leading-tight">
                       {proposal.result.create_goal.goal.target_amount !== null && proposal.result.create_goal.goal.target_amount !== undefined
                         ? `$${formatAmount(proposal.result.create_goal.goal.target_amount)}` 
                         : 'Pendiente'}
                     </p>
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-gray-400 uppercase">Cuenta Vinculada</label>
-                    <p className="text-sm flex items-center gap-1 dark:text-gray-300">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 block">Cuenta Vinculada</label>
+                    <p className="text-base font-bold dark:text-white leading-tight flex items-center gap-1">
                       <CreditCard size={14} /> 
                       {proposal.result.create_goal.goal.account_name || 'Por definir'}
                     </p>
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-gray-400 uppercase">Fecha Límite</label>
-                    <p className="text-sm dark:text-gray-300">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 block">Fecha Límite</label>
+                    <p className="text-base font-bold dark:text-white leading-tight">
                       {proposal.result.create_goal.goal.deadline || 'Sin fecha'}
                     </p>
                   </div>
@@ -4787,7 +4792,7 @@ service cloud.firestore {
                 </div>
               )}
 
-              <div className="flex gap-3 pt-4">
+              <div className="flex gap-3 pt-2">
                 <button 
                   onClick={confirmProposal}
                   disabled={proposal?.status === 'needs_clarification' || isProcessing || !proposal?.operation || (proposal?.operation === 'create' && !proposal?.result?.create?.event)}
