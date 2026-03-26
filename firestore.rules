@@ -72,17 +72,17 @@ service cloud.firestore {
     }
 
     match /events/{eventId} {
-      allow read: if isAuthenticated() && (resource.data.user_id == request.auth.uid || isAdmin());
+      allow read: if isAuthenticated() && (resource == null || resource.data.user_id == request.auth.uid || isAdmin());
       allow create: if isAuthenticated() && isValidEvent(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.user_id == request.auth.uid && isValidEvent(request.resource.data);
-      allow delete: if isAuthenticated() && (resource.data.user_id == request.auth.uid || isAdmin());
+      allow update: if isAuthenticated() && (resource == null || resource.data.user_id == request.auth.uid) && isValidEvent(request.resource.data);
+      allow delete: if isAuthenticated() && (resource == null || resource.data.user_id == request.auth.uid || isAdmin());
     }
 
     match /goals/{goalId} {
-      allow read: if isAuthenticated() && (resource.data.user_id == request.auth.uid || isAdmin());
+      allow read: if isAuthenticated() && (resource == null || resource.data.user_id == request.auth.uid || isAdmin());
       allow create: if isAuthenticated() && isValidGoal(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.user_id == request.auth.uid && isValidGoal(request.resource.data);
-      allow delete: if isAuthenticated() && (resource.data.user_id == request.auth.uid || isAdmin());
+      allow update: if isAuthenticated() && (resource == null || resource.data.user_id == request.auth.uid) && isValidGoal(request.resource.data);
+      allow delete: if isAuthenticated() && (resource == null || resource.data.user_id == request.auth.uid || isAdmin());
     }
 
     match /subscriptions/{userId} {

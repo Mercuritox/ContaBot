@@ -963,9 +963,34 @@ async function startServer() {
     const userId = (req.query.userId as string) || null;
 
     try {
-      const existing = db.prepare("SELECT * FROM events WHERE id = ?").get(id) as any;
+      const existing = db.prepare("SELECT * FROM events WHERE id = ? AND (user_id = ? OR user_id IS NULL)").get(id, userId) as any;
+      
+      let firestoreUpdated = false;
+
+      // Sync to Firestore first
+      if (userId) {
+        const docPath = `events/${id}`;
+        try {
+          const docSnap = await firestore.doc(docPath).get();
+          if (docSnap.exists && docSnap.data()?.user_id === userId) {
+            await firestore.doc(docPath).set({
+              ...data,
+              id: id,
+              user_id: userId,
+              updated_at: admin.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+            firestoreUpdated = true;
+          }
+        } catch (error) {
+          console.error("Error updating Firestore:", error);
+        }
+      }
+
       if (!existing) {
-        return res.status(404).json({ error: "Movimiento no encontrado" });
+        if (firestoreUpdated) {
+          return res.json({ success: true, note: "Updated in Firestore only" });
+        }
+        return res.status(404).json({ error: "Movimiento no encontrado o no autorizado" });
       }
 
       // Merge data
@@ -1000,25 +1025,95 @@ async function startServer() {
         id
       );
 
-      // Sync to Firestore
-      if (userId) {
-        const docPath = `events/${id}`;
-        try {
-          await firestore.doc(docPath).set({
-            ...updatedEvent,
-            id: id,
-            user_id: userId,
-            updated_at: admin.firestore.FieldValue.serverTimestamp()
-          }, { merge: true });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, docPath, userId);
-        }
-      }
-
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error updating event:", error);
       res.status(500).json({ error: `Error al actualizar el movimiento: ${error.message}` });
+    }
+  });
+
+  app.put("/api/events/group/:groupId", async (req, res) => {
+    const { groupId } = req.params;
+    const data = req.body;
+    const userId = (req.query.userId as string) || null;
+
+    try {
+      const existingEvents = db.prepare("SELECT * FROM events WHERE group_id = ? AND (user_id = ? OR user_id IS NULL)").all(groupId, userId) as any[];
+      
+      let firestoreUpdatedCount = 0;
+      
+      if (userId) {
+        try {
+          const snapshot = await firestore.collection('events')
+            .where('group_id', '==', groupId)
+            .where('user_id', '==', userId)
+            .get();
+            
+          if (!snapshot.empty) {
+            const batch = firestore.batch();
+            snapshot.docs.forEach(doc => {
+              const currentData = doc.data();
+              batch.set(doc.ref, {
+                ...currentData,
+                ...data,
+                updated_at: admin.firestore.FieldValue.serverTimestamp()
+              }, { merge: true });
+              firestoreUpdatedCount++;
+            });
+            await batch.commit();
+          }
+        } catch (error) {
+          console.error("Error updating group in Firestore:", error);
+        }
+      }
+
+      if (!existingEvents || existingEvents.length === 0) {
+        if (firestoreUpdatedCount > 0) {
+          return res.json({ success: true, changes: 0, firestoreUpdated: firestoreUpdatedCount, note: "Updated in Firestore only" });
+        }
+        return res.status(404).json({ error: "Movimientos no encontrados" });
+      }
+
+      let changes = 0;
+      for (const existing of existingEvents) {
+        // Merge data
+        const eventData = JSON.parse(existing.raw_data || '{}');
+        const updatedEvent = { ...eventData, ...data };
+        
+        // Ensure occurred_at is in ISO format if it's just a date
+        if (updatedEvent.occurred_at && !updatedEvent.occurred_at.includes('T')) {
+          updatedEvent.occurred_at = new Date(updatedEvent.occurred_at).toISOString();
+        }
+
+        const stmt = db.prepare(`
+          UPDATE events SET 
+            kind = ?, amount = ?, currency = ?, occurred_at = ?, timezone = ?, 
+            description = ?, category = ?, payment_method = ?, merchant_name = ?, 
+            account_name = ?, raw_data = ?
+          WHERE id = ?
+        `);
+
+        stmt.run(
+          updatedEvent.kind || existing.kind,
+          updatedEvent.amount || existing.amount,
+          updatedEvent.currency || existing.currency,
+          updatedEvent.occurred_at || existing.occurred_at,
+          updatedEvent.timezone || existing.timezone,
+          updatedEvent.description || existing.description,
+          capitalize(updatedEvent.category || existing.category),
+          updatedEvent.payment_method || existing.payment_method,
+          updatedEvent.merchant_name || existing.merchant_name,
+          updatedEvent.account_name || existing.account_name,
+          JSON.stringify(updatedEvent),
+          existing.id
+        );
+        changes++;
+      }
+
+      res.json({ success: true, changes, firestoreUpdated: firestoreUpdatedCount });
+    } catch (error: any) {
+      console.error("Error updating group events:", error);
+      res.status(500).json({ error: `Error al actualizar los movimientos del grupo: ${error.message}` });
     }
   });
 
@@ -1030,24 +1125,104 @@ async function startServer() {
       const stmt = db.prepare("DELETE FROM events WHERE id = ? AND (user_id = ? OR user_id IS NULL)");
       const result = stmt.run(id, userId);
       
-      if (result.changes === 0) {
-        return res.status(404).json({ error: "Movimiento no encontrado o no autorizado" });
-      }
+      let firestoreDeleted = false;
 
       // Sync to Firestore
       if (userId) {
         const docPath = `events/${id}`;
         try {
-          await firestore.doc(docPath).delete();
+          const docSnap = await firestore.doc(docPath).get();
+          if (docSnap.exists && docSnap.data()?.user_id === userId) {
+            await firestore.doc(docPath).delete();
+            firestoreDeleted = true;
+          }
         } catch (error) {
-          handleFirestoreError(error, OperationType.DELETE, docPath, userId);
+          console.error("Error deleting from Firestore:", error);
         }
+      }
+
+      if (result.changes === 0 && !firestoreDeleted) {
+        return res.status(404).json({ error: "Movimiento no encontrado o no autorizado" });
       }
 
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error deleting event:", error);
       res.status(500).json({ error: `Error al eliminar el movimiento: ${error.message}` });
+    }
+  });
+
+  app.delete("/api/events/batch/:batchId", async (req, res) => {
+    const { batchId } = req.params;
+    const userId = (req.query.userId as string) || null;
+
+    try {
+      const stmt = db.prepare("DELETE FROM events WHERE batch_id = ? AND (user_id = ? OR user_id IS NULL)");
+      const result = stmt.run(batchId, userId);
+      
+      let firestoreDeletedCount = 0;
+      
+      if (userId) {
+        try {
+          const snapshot = await firestore.collection('events')
+            .where('batch_id', '==', batchId)
+            .where('user_id', '==', userId)
+            .get();
+            
+          if (!snapshot.empty) {
+            const batch = firestore.batch();
+            snapshot.docs.forEach(doc => {
+              batch.delete(doc.ref);
+              firestoreDeletedCount++;
+            });
+            await batch.commit();
+          }
+        } catch (error) {
+          console.error("Error deleting batch from Firestore:", error);
+        }
+      }
+
+      res.json({ success: true, changes: result.changes, firestoreDeleted: firestoreDeletedCount });
+    } catch (error: any) {
+      console.error("Error deleting batch events:", error);
+      res.status(500).json({ error: `Error al eliminar los movimientos del lote: ${error.message}` });
+    }
+  });
+
+  app.delete("/api/events/group/:groupId", async (req, res) => {
+    const { groupId } = req.params;
+    const userId = (req.query.userId as string) || null;
+
+    try {
+      const stmt = db.prepare("DELETE FROM events WHERE group_id = ? AND (user_id = ? OR user_id IS NULL)");
+      const result = stmt.run(groupId, userId);
+      
+      let firestoreDeletedCount = 0;
+      
+      if (userId) {
+        try {
+          const snapshot = await firestore.collection('events')
+            .where('group_id', '==', groupId)
+            .where('user_id', '==', userId)
+            .get();
+            
+          if (!snapshot.empty) {
+            const batch = firestore.batch();
+            snapshot.docs.forEach(doc => {
+              batch.delete(doc.ref);
+              firestoreDeletedCount++;
+            });
+            await batch.commit();
+          }
+        } catch (error) {
+          console.error("Error deleting group from Firestore:", error);
+        }
+      }
+
+      res.json({ success: true, changes: result.changes, firestoreDeleted: firestoreDeletedCount });
+    } catch (error: any) {
+      console.error("Error deleting group events:", error);
+      res.status(500).json({ error: `Error al eliminar los movimientos del grupo: ${error.message}` });
     }
   });
 

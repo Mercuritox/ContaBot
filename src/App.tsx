@@ -202,17 +202,7 @@ const getEntityColor = (name: string, type: 'account' | 'category' | 'debt') => 
   return null;
 };
 
-const createImage = (url: string): Promise<HTMLImageElement> =>
-  new Promise((resolve, reject) => {
-    const image = new Image();
-    image.addEventListener('load', () => resolve(image));
-    image.addEventListener('error', (error) => reject(error));
-    image.setAttribute('crossOrigin', 'anonymous');
-    image.src = url;
-  });
-
-async function getCroppedImg(imageSrc: string, pixelCrop: PixelCrop): Promise<string> {
-  const image = await createImage(imageSrc);
+async function getCroppedImg(image: HTMLImageElement, pixelCrop: PixelCrop): Promise<string> {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
 
@@ -223,8 +213,8 @@ async function getCroppedImg(imageSrc: string, pixelCrop: PixelCrop): Promise<st
   const scaleX = image.naturalWidth / image.width;
   const scaleY = image.naturalHeight / image.height;
 
-  canvas.width = pixelCrop.width;
-  canvas.height = pixelCrop.height;
+  canvas.width = pixelCrop.width * scaleX;
+  canvas.height = pixelCrop.height * scaleY;
 
   ctx.drawImage(
     image,
@@ -234,8 +224,8 @@ async function getCroppedImg(imageSrc: string, pixelCrop: PixelCrop): Promise<st
     pixelCrop.height * scaleY,
     0,
     0,
-    pixelCrop.width,
-    pixelCrop.height
+    pixelCrop.width * scaleX,
+    pixelCrop.height * scaleY
   );
 
   return new Promise((resolve) => {
@@ -245,7 +235,7 @@ async function getCroppedImg(imageSrc: string, pixelCrop: PixelCrop): Promise<st
       }
       const fileUrl = URL.createObjectURL(blob);
       resolve(fileUrl);
-    }, 'image/jpeg');
+    }, 'image/jpeg', 0.9);
   });
 }
 
@@ -297,11 +287,11 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
     match /events/{eventId} {
-      allow read, write: if request.auth != null && request.auth.uid == resource.data.user_id;
+      allow read, update, delete: if request.auth != null && (resource == null || request.auth.uid == resource.data.user_id);
       allow create: if request.auth != null && request.resource.data.user_id == request.auth.uid;
     }
     match /goals/{goalId} {
-      allow read, write: if request.auth != null && request.auth.uid == resource.data.user_id;
+      allow read, update, delete: if request.auth != null && (resource == null || request.auth.uid == resource.data.user_id);
       allow create: if request.auth != null && request.resource.data.user_id == request.auth.uid;
     }
   }
@@ -3418,10 +3408,10 @@ service cloud.firestore {
   };
 
   const handleConfirmCrop = async () => {
-    if (imageToCrop && completedCrop) {
+    if (imgRef.current && completedCrop) {
       setIsProcessing(true);
       try {
-        const croppedImage = await getCroppedImg(imageToCrop, completedCrop);
+        const croppedImage = await getCroppedImg(imgRef.current, completedCrop);
         const response = await fetch(croppedImage);
         const blob = await response.blob();
         
@@ -3746,40 +3736,85 @@ service cloud.firestore {
 
       // Delete the primary event
       if (eventId.startsWith('int_')) {
-        await fetch(`/api/events/${eventId}`, { method: 'DELETE' });
+        const res = await fetch(`/api/events/${eventId}?userId=${user.id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error("Error deleting from SQLite");
       } else {
-        await deleteDoc(doc(db, 'events', eventId));
-        fetch(`/api/events/${eventId}`, { method: 'DELETE' }).catch(e => console.error("Error deleting SQLite event:", e));
+        try {
+          await deleteDoc(doc(db, 'events', eventId));
+        } catch (e: any) {
+          console.warn("Error deleting from Firestore, continuing to SQLite:", e);
+        }
+        const res = await fetch(`/api/events/${eventId}?userId=${user.id}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data.error !== "Movimiento no encontrado o no autorizado") {
+            throw new Error(data.error || "Error deleting from SQLite");
+          }
+        }
       }
 
       // If it's part of a batch or group, delete the linked events too
       if (eventToDelete.batch_id) {
-        const q = query(
-          collection(db, 'events'), 
-          where('batch_id', '==', eventToDelete.batch_id),
-          where('user_id', '==', user.id)
-        );
-        const querySnapshot = await getDocs(q);
-        
-        for (const eventDoc of querySnapshot.docs) {
-          if (eventDoc.id !== eventId) {
-            await deleteDoc(doc(db, 'events', eventDoc.id));
-            fetch(`/api/events/${eventDoc.id}`, { method: 'DELETE' }).catch(e => console.error("Error deleting SQLite event:", e));
+        try {
+          const q = query(
+            collection(db, 'events'), 
+            where('batch_id', '==', eventToDelete.batch_id),
+            where('user_id', '==', user.id)
+          );
+          const querySnapshot = await getDocs(q);
+          
+          for (const eventDoc of querySnapshot.docs) {
+            if (eventDoc.id !== eventId) {
+              try {
+                await deleteDoc(doc(db, 'events', eventDoc.id));
+              } catch (e: any) {
+                console.warn("Error deleting linked event from Firestore:", e);
+              }
+              const res = await fetch(`/api/events/${eventDoc.id}?userId=${user.id}`, { method: 'DELETE' });
+              if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                if (data.error !== "Movimiento no encontrado o no autorizado") {
+                  throw new Error(data.error || "Error deleting linked event from SQLite");
+                }
+              }
+            }
           }
+        } catch (e: any) {
+          console.warn("Error querying batch events from Firestore:", e);
+          // Fallback: delete from SQLite directly if Firestore query fails
+          const res = await fetch(`/api/events/batch/${eventToDelete.batch_id}?userId=${user.id}`, { method: 'DELETE' });
+          if (!res.ok) throw new Error("Error deleting batch from SQLite");
         }
       } else if (eventToDelete.group_id) {
-        const q = query(
-          collection(db, 'events'), 
-          where('group_id', '==', eventToDelete.group_id),
-          where('user_id', '==', user.id)
-        );
-        const querySnapshot = await getDocs(q);
-        
-        for (const eventDoc of querySnapshot.docs) {
-          if (eventDoc.id !== eventId) {
-            await deleteDoc(doc(db, 'events', eventDoc.id));
-            fetch(`/api/events/${eventDoc.id}`, { method: 'DELETE' }).catch(e => console.error("Error deleting SQLite event:", e));
+        try {
+          const q = query(
+            collection(db, 'events'), 
+            where('group_id', '==', eventToDelete.group_id),
+            where('user_id', '==', user.id)
+          );
+          const querySnapshot = await getDocs(q);
+          
+          for (const eventDoc of querySnapshot.docs) {
+            if (eventDoc.id !== eventId) {
+              try {
+                await deleteDoc(doc(db, 'events', eventDoc.id));
+              } catch (e: any) {
+                console.warn("Error deleting linked event from Firestore:", e);
+              }
+              const res = await fetch(`/api/events/${eventDoc.id}?userId=${user.id}`, { method: 'DELETE' });
+              if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                if (data.error !== "Movimiento no encontrado o no autorizado") {
+                  throw new Error(data.error || "Error deleting linked event from SQLite");
+                }
+              }
+            }
           }
+        } catch (e: any) {
+          console.warn("Error querying group events from Firestore:", e);
+          // Fallback: delete from SQLite directly if Firestore query fails
+          const res = await fetch(`/api/events/group/${eventToDelete.group_id}?userId=${user.id}`, { method: 'DELETE' });
+          if (!res.ok) throw new Error("Error deleting group from SQLite");
         }
       }
 
@@ -3851,43 +3886,85 @@ service cloud.firestore {
       // Update the primary event
       if (id.startsWith('int_')) {
         // This is an interest event generated by the server, it only exists in SQLite
-        await fetch(`/api/events/${id}`, {
+        const res = await fetch(`/api/events/${id}?userId=${user.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(cleanedData)
         });
+        if (!res.ok) throw new Error("Error updating SQLite event");
       } else {
-        await updateDoc(doc(db, 'events', id), cleanedData);
+        try {
+          await setDoc(doc(db, 'events', id), cleanedData, { merge: true });
+        } catch (e: any) {
+          console.warn("Error updating Firestore event, continuing to SQLite:", e);
+        }
+        const res = await fetch(`/api/events/${id}?userId=${user.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cleanedData)
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data.error !== "Movimiento no encontrado o no autorizado") {
+            throw new Error(data.error || "Error updating SQLite event");
+          }
+        }
       }
 
       // If it's part of a group, update the linked event too
       if (updatedEvent.group_id) {
-        const q = query(
-          collection(db, 'events'), 
-          where('group_id', '==', updatedEvent.group_id),
-          where('user_id', '==', user.id)
-        );
-        const querySnapshot = await getDocs(q);
-        
-        for (const eventDoc of querySnapshot.docs) {
-          if (eventDoc.id !== id) {
-            // Update linked event with same basic info but keep its own kind/amount logic if needed
-            // For loans/debts, they usually share everything except kind (and sometimes amount sign)
-            const linkedUpdates: any = {
-              description: cleanedData.description,
-              amount: cleanedData.amount,
-              category: cleanedData.category,
-              occurred_at: cleanedData.occurred_at,
-              merchant_name: cleanedData.merchant_name
-            };
-            
-            // Clean undefined
-            Object.keys(linkedUpdates).forEach(k => {
-              if (linkedUpdates[k] === undefined) delete linkedUpdates[k];
-            });
-            
-            await updateDoc(doc(db, 'events', eventDoc.id), linkedUpdates);
+        try {
+          const q = query(
+            collection(db, 'events'), 
+            where('group_id', '==', updatedEvent.group_id),
+            where('user_id', '==', user.id)
+          );
+          const querySnapshot = await getDocs(q);
+          
+          for (const eventDoc of querySnapshot.docs) {
+            if (eventDoc.id !== id) {
+              // Update linked event with same basic info but keep its own kind/amount logic if needed
+              // For loans/debts, they usually share everything except kind (and sometimes amount sign)
+              const linkedUpdates: any = {
+                description: cleanedData.description,
+                amount: cleanedData.amount,
+                category: cleanedData.category,
+                occurred_at: cleanedData.occurred_at,
+                merchant_name: cleanedData.merchant_name
+              };
+              
+              // Clean undefined
+              Object.keys(linkedUpdates).forEach(k => {
+                if (linkedUpdates[k] === undefined) delete linkedUpdates[k];
+              });
+              
+              try {
+                await setDoc(doc(db, 'events', eventDoc.id), linkedUpdates, { merge: true });
+              } catch (e: any) {
+                console.warn("Error updating linked Firestore event:", e);
+              }
+              const res = await fetch(`/api/events/${eventDoc.id}?userId=${user.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(linkedUpdates)
+              });
+              if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                if (data.error !== "Movimiento no encontrado o no autorizado") {
+                  throw new Error(data.error || "Error updating linked SQLite event");
+                }
+              }
+            }
           }
+        } catch (e: any) {
+          console.warn("Error querying group events from Firestore:", e);
+          // Fallback: update SQLite directly if Firestore query fails
+          const res = await fetch(`/api/events/group/${updatedEvent.group_id}?userId=${user.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cleanedData)
+          });
+          if (!res.ok) throw new Error("Error updating SQLite group");
         }
       }
 
@@ -3898,7 +3975,7 @@ service cloud.firestore {
     } catch (err: any) {
       console.error("Error updating event:", err);
       if (err.code === 'permission-denied' || (err.message && err.message.includes('permissions'))) {
-        setError('Error de permisos: No tienes permiso para actualizar este perfil.');
+        setError('Error de permisos: No tienes permiso para actualizar este movimiento.');
       } else {
         setError("Error al actualizar el movimiento");
       }
