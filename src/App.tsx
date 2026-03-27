@@ -4406,12 +4406,19 @@ service cloud.firestore {
                   else if (t === 'year') setFilterDate(`${y}`);
                 }}
                 className={cn(
-                  "px-3 py-1.5 text-xs font-bold rounded-lg transition-all",
+                  "px-3 py-1.5 text-xs font-bold rounded-lg transition-colors relative z-10",
                   filterType === t 
-                    ? "bg-white dark:bg-gray-800 text-emerald-600 shadow-sm" 
+                    ? "text-emerald-600 dark:text-emerald-400" 
                     : "text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
                 )}
               >
+                {filterType === t && (
+                  <motion.div
+                    layoutId="filter-bubble"
+                    className="absolute inset-0 bg-white dark:bg-gray-800 shadow-sm rounded-lg -z-10"
+                    transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                  />
+                )}
                 {t === 'day' ? 'Día' : t === 'month' ? 'Mes' : t === 'year' ? 'Año' : 'Todo'}
               </button>
             ))}
@@ -4438,26 +4445,46 @@ service cloud.firestore {
             )}
           </div>
 
-          {filterType !== 'all' && (
-            <div className="flex items-center gap-4">
-              <button 
-                onClick={() => adjustDate(-1)}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-all text-gray-400"
+          <AnimatePresence mode="wait">
+            {filterType !== 'all' && (
+              <motion.div
+                key="date-picker"
+                initial={{ opacity: 0, width: 0, x: 20 }}
+                animate={{ opacity: 1, width: 'auto', x: 0 }}
+                exit={{ opacity: 0, width: 0, x: 20 }}
+                transition={{ duration: 0.3, ease: "easeInOut" }}
+                className="flex items-center gap-4 overflow-hidden"
               >
-                <ChevronLeft size={20} />
-              </button>
-              <div className="flex items-center gap-2 font-bold text-gray-700 dark:text-gray-200 min-w-[120px] justify-center">
-                <Calendar size={18} className="text-emerald-500" />
-                <span>{getFilterLabel()}</span>
-              </div>
-              <button 
-                onClick={() => adjustDate(1)}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-all text-gray-400"
-              >
-                <ChevronRight size={20} />
-              </button>
-            </div>
-          )}
+                <button 
+                  onClick={() => adjustDate(-1)}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-all text-gray-400"
+                >
+                  <ChevronLeft size={20} />
+                </button>
+                <div className="flex items-center gap-2 font-bold text-gray-700 dark:text-gray-200 min-w-[120px] justify-center relative overflow-hidden">
+                  <Calendar size={18} className="text-emerald-500" />
+                  <AnimatePresence mode="popLayout">
+                    <motion.span
+                      key={getFilterLabel()}
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                      transition={{ duration: 0.2 }}
+                      className="inline-block whitespace-nowrap"
+                    >
+                      {getFilterLabel()}
+                    </motion.span>
+                  </AnimatePresence>
+                </div>
+                <button 
+                  onClick={() => adjustDate(1)}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-all text-gray-400"
+                >
+                  <ChevronRight size={20} />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
     );
@@ -4707,17 +4734,38 @@ service cloud.firestore {
         if (isLinkedAndRecent) {
           const nextEvent = eventsToRender[i + 1];
           elements.push(
-            <div key={`group-${event.group_id}`} className="relative mb-2 last:mb-0">
+            <motion.div 
+              key={`group-${event.group_id}`} 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
+              className="relative mb-2 last:mb-0"
+            >
               {renderCard(event, true, false, nextEvent)}
               {renderCard(nextEvent, false, true)}
-            </div>
+            </motion.div>
           );
           i++; // Skip next event
         } else {
-          elements.push(renderCard(event, false, false));
+          elements.push(
+            <motion.div
+              key={`event-${event.id}`}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
+            >
+              {renderCard(event, false, false)}
+            </motion.div>
+          );
         }
       }
-      return elements;
+      return (
+        <AnimatePresence mode="popLayout">
+          {elements}
+        </AnimatePresence>
+      );
     };
 
     return (
@@ -4727,7 +4775,18 @@ service cloud.firestore {
           Hola, {user?.username?.split(' ')[0]} 👋
         </p>
         <p className="text-3xl font-bold font-mono">
-          ${formatAmount(summary.balance - summary.expenses)}
+          <AnimatePresence mode="wait">
+            <motion.span
+              key={summary.balance - summary.expenses}
+              initial={{ opacity: 0, filter: "blur(4px)" }}
+              animate={{ opacity: 1, filter: "blur(0px)" }}
+              exit={{ opacity: 0, filter: "blur(4px)" }}
+              transition={{ duration: 0.2 }}
+              className="inline-block"
+            >
+              ${formatAmount(summary.balance - summary.expenses)}
+            </motion.span>
+          </AnimatePresence>
         </p>
         <p className="text-xs text-emerald-200 mt-1">Balance total</p>
       </div>
@@ -4746,7 +4805,20 @@ service cloud.firestore {
               </motion.div>
             </button>
           </div>
-          <p className="text-lg sm:text-2xl font-mono font-semibold dark:text-white">${formatAmount(summary.balance)}</p>
+          <p className="text-lg sm:text-2xl font-mono font-semibold dark:text-white">
+            <AnimatePresence mode="wait">
+              <motion.span
+                key={summary.balance}
+                initial={{ opacity: 0, filter: "blur(4px)" }}
+                animate={{ opacity: 1, filter: "blur(0px)" }}
+                exit={{ opacity: 0, filter: "blur(4px)" }}
+                transition={{ duration: 0.2 }}
+                className="inline-block"
+              >
+                ${formatAmount(summary.balance)}
+              </motion.span>
+            </AnimatePresence>
+          </p>
           <AnimatePresence initial={false}>
             {expandedSummary === 'income' && (
               <motion.div 
@@ -4775,7 +4847,20 @@ service cloud.firestore {
               </motion.div>
             </button>
           </div>
-          <p className="text-lg sm:text-2xl font-mono font-semibold dark:text-white">${formatAmount(summary.expenses)}</p>
+          <p className="text-lg sm:text-2xl font-mono font-semibold dark:text-white">
+            <AnimatePresence mode="wait">
+              <motion.span
+                key={summary.expenses}
+                initial={{ opacity: 0, filter: "blur(4px)" }}
+                animate={{ opacity: 1, filter: "blur(0px)" }}
+                exit={{ opacity: 0, filter: "blur(4px)" }}
+                transition={{ duration: 0.2 }}
+                className="inline-block"
+              >
+                ${formatAmount(summary.expenses)}
+              </motion.span>
+            </AnimatePresence>
+          </p>
           <AnimatePresence initial={false}>
             {expandedSummary === 'expense' && (
               <motion.div 
@@ -4804,7 +4889,20 @@ service cloud.firestore {
               </motion.div>
             </button>
           </div>
-          <p className="text-lg sm:text-2xl font-mono font-semibold dark:text-white">${formatAmount(summary.debts)}</p>
+          <p className="text-lg sm:text-2xl font-mono font-semibold dark:text-white">
+            <AnimatePresence mode="wait">
+              <motion.span
+                key={summary.debts}
+                initial={{ opacity: 0, filter: "blur(4px)" }}
+                animate={{ opacity: 1, filter: "blur(0px)" }}
+                exit={{ opacity: 0, filter: "blur(4px)" }}
+                transition={{ duration: 0.2 }}
+                className="inline-block"
+              >
+                ${formatAmount(summary.debts)}
+              </motion.span>
+            </AnimatePresence>
+          </p>
           <AnimatePresence initial={false}>
             {expandedSummary === 'debt' && (
               <motion.div 
@@ -4833,7 +4931,20 @@ service cloud.firestore {
               </motion.div>
             </button>
           </div>
-          <p className="text-lg sm:text-2xl font-mono font-semibold dark:text-white">${formatAmount(summary.loans)}</p>
+          <p className="text-lg sm:text-2xl font-mono font-semibold dark:text-white">
+            <AnimatePresence mode="wait">
+              <motion.span
+                key={summary.loans}
+                initial={{ opacity: 0, filter: "blur(4px)" }}
+                animate={{ opacity: 1, filter: "blur(0px)" }}
+                exit={{ opacity: 0, filter: "blur(4px)" }}
+                transition={{ duration: 0.2 }}
+                className="inline-block"
+              >
+                ${formatAmount(summary.loans)}
+              </motion.span>
+            </AnimatePresence>
+          </p>
           <AnimatePresence initial={false}>
             {expandedSummary === 'loan' && (
               <motion.div 
