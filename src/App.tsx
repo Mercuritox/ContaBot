@@ -51,7 +51,8 @@ import {
   Clock,
   RefreshCw,
   Download,
-  Bell
+  Bell,
+  AlertTriangle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
@@ -300,6 +301,7 @@ service cloud.firestore {
   const [isRecording, setIsRecording] = useState(false);
   const [isVoiceProcessing, setIsVoiceProcessing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isAnalyzingInput, setIsAnalyzingInput] = useState(false);
   const [editingEvent, setEditingEvent] = useState<any>(null);
   const [proposal, setProposal] = useState<GeminiResponse | null>(null);
   const [recentEvents, setRecentEvents] = useState<any[]>([]);
@@ -422,6 +424,15 @@ service cloud.firestore {
   const [showImageGroupModal, setShowImageGroupModal] = useState(false);
 
   const proposalRef = useRef<HTMLDivElement>(null);
+  const loadingRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isAnalyzingInput && !proposal && loadingRef.current) {
+      setTimeout(() => {
+        loadingRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
+    }
+  }, [isAnalyzingInput, proposal]);
 
   useEffect(() => {
     if (!window.speechSynthesis) return;
@@ -522,6 +533,8 @@ service cloud.firestore {
   const [showCameraMenu, setShowCameraMenu] = useState(false);
   const [showCropModal, setShowCropModal] = useState(false);
   const [showWebcamModal, setShowWebcamModal] = useState(false);
+  const [showPdfWarning, setShowPdfWarning] = useState(false);
+  const [pendingPdfFile, setPendingPdfFile] = useState<string | null>(null);
   const [showReceiptModal, setShowReceiptModal] = useState<string | null>(null);
   const [imageToCrop, setImageToCrop] = useState<string | null>(null);
   const [crop, setCrop] = useState<Crop>();
@@ -530,6 +543,7 @@ service cloud.firestore {
   const receiptImgRef = useRef<HTMLImageElement>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -770,7 +784,7 @@ service cloud.firestore {
       const response = await fetch('/api/notifications/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: safeJsonStringify({
           firebase_uid: user.uid,
           subscription: subscription.toJSON()
         })
@@ -802,7 +816,7 @@ service cloud.firestore {
       await fetch('/api/notifications/subscribe', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ firebase_uid: user.uid })
+        body: safeJsonStringify({ firebase_uid: user.uid })
       });
 
       setIsPushEnabled(false);
@@ -1523,7 +1537,7 @@ service cloud.firestore {
         const res = await fetch('/api/export/excel', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+          body: safeJsonStringify({
             userId: user.uid,
             periodLabel: getExportPeriodLabel(),
             events: recentEvents,
@@ -1627,17 +1641,29 @@ service cloud.firestore {
 
       const systemPrompt = `Eres ContaBot, un asistente financiero personal amigable. 
   Tu tarea es analizar los gastos mensuales del usuario y darle recomendaciones personalizadas.
-  Responde SIEMPRE en español, con tono amigable, cercano y motivador.
-  USA emojis frecuentemente para hacer el análisis más visual y agradable.
+  Responde SIEMPRE en español, con tono amigable, cercano y humano.
+  USA emojis frecuentemente.
   
-  ESTRUCTURA DE TU RESPUESTA (usa este formato exacto con secciones):
+  REGLAS ESTRICTAS DE FORMATO:
+  - NUNCA uses etiquetas numeradas como "1. Saludo", "6. Mensaje Motivador", etc.
+  - Inicia con un ÚNICO saludo natural y directo (ej. "¡Hola, [Nombre]! 👋 Aquí tienes el análisis de tu mes..."). No saludes dos veces.
+  - Termina con un párrafo motivador natural. NUNCA le pongas un título como "Mensaje Motivador" o "Cierre" a este último párrafo.
   
-  1. Empieza DIRECTAMENTE con el resumen del mes, sin saludo previo ni introducción. El primer párrafo debe ser el RESUMEN DEL MES con los números.
-  2. 📊 RESUMEN DEL MES — breve resumen de ingresos vs gastos
-  3. 🔍 GASTOS QUE PUEDES EVITAR — identifica las 2-3 categorías donde más gasta y que son evitables (no incluyas renta, servicios básicos, salud)
-  4. 💡 RECOMENDACIONES — para cada gasto evitable, sugiere cuánto podría ahorrarse y qué hacer con ese dinero
-  5. 🎯 CONEXIÓN CON TUS OBJETIVOS — si el usuario tiene objetivos activos, menciona cuánto más rápido podría cumplirlos si ahorra lo recomendado. Menciona el objetivo por nombre e emoji.
-  6. Cierra con un párrafo motivador y personalizado, sin título ni encabezado, solo el mensaje directamente.
+  Tu mensaje debe fluir naturalmente cubriendo estos puntos (puedes usar estos títulos con sus emojis para separar la información central):
+  
+  📊 RESUMEN DEL MES
+  Breve resumen de ingresos vs gastos.
+  
+  🔍 GASTOS QUE PUEDES EVITAR
+  Identifica las 2-3 categorías donde más gasta y que son evitables (no incluyas renta, servicios básicos, salud).
+  
+  💡 RECOMENDACIONES
+  Para cada gasto evitable, sugiere cuánto podría ahorrarse y qué hacer con ese dinero.
+  
+  🎯 CONEXIÓN CON TUS OBJETIVOS
+  Si el usuario tiene objetivos activos, menciona cuánto más rápido podría cumplirlos si ahorra lo recomendado. Menciona el objetivo por nombre e emoji.
+  
+  (Recuerda: después de los objetivos, simplemente escribe tu mensaje motivador de despedida sin ningún título).
   
   Sé específico con los números. Si no hay suficientes datos, dilo amablemente y anima al usuario a registrar más movimientos.
   
@@ -1651,7 +1677,7 @@ service cloud.firestore {
       
       const response = await genAI.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: `Analiza mis finanzas de este mes: ${JSON.stringify(summaryData)}`,
+        contents: `Analiza mis finanzas de este mes: ${safeJsonStringify(summaryData)}`,
         config: {
           systemInstruction: systemPrompt
         }
@@ -1688,17 +1714,29 @@ service cloud.firestore {
       
       const systemPrompt = `Eres ContaBot, un asistente financiero personal amigable. 
   Tu tarea es analizar los gastos mensuales del usuario y darle recomendaciones personalizadas.
-  Responde SIEMPRE en español, con tono amigable, cercano y motivador.
-  USA emojis frecuentemente para hacer el análisis más visual y agradable.
+  Responde SIEMPRE en español, con tono amigable, cercano y humano.
+  USA emojis frecuentemente.
   
-  ESTRUCTURA DE TU RESPUESTA (usa este formato exacto con secciones):
+  REGLAS ESTRICTAS DE FORMATO:
+  - NUNCA uses etiquetas numeradas como "1. Saludo", "6. Mensaje Motivador", etc.
+  - Inicia con un ÚNICO saludo natural y directo (ej. "¡Hola, [Nombre]! 👋 Aquí tienes el análisis de tu mes..."). No saludes dos veces.
+  - Termina con un párrafo motivador natural. NUNCA le pongas un título como "Mensaje Motivador" o "Cierre" a este último párrafo.
   
-  1. Empieza DIRECTAMENTE con el resumen del mes, sin saludo previo ni introducción. El primer párrafo debe ser el RESUMEN DEL MES con los números.
-  2. 📊 RESUMEN DEL MES — breve resumen de ingresos vs gastos
-  3. 🔍 GASTOS QUE PUEDES EVITAR — identifica las 2-3 categorías donde más gasta y que son evitables (no incluyas renta, servicios básicos, salud)
-  4. 💡 RECOMENDACIONES — para cada gasto evitable, sugiere cuánto podría ahorrarse y qué hacer con ese dinero
-  5. 🎯 CONEXIÓN CON TUS OBJETIVOS — si el usuario tiene objetivos activos, menciona cuánto más rápido podría cumplirlos si ahorra lo recomendado. Menciona el objetivo por nombre e emoji.
-  6. Cierra con un párrafo motivador y personalizado, sin título ni encabezado, solo el mensaje directamente.
+  Tu mensaje debe fluir naturalmente cubriendo estos puntos (puedes usar estos títulos con sus emojis para separar la información central):
+  
+  📊 RESUMEN DEL MES
+  Breve resumen de ingresos vs gastos.
+  
+  🔍 GASTOS QUE PUEDES EVITAR
+  Identifica las 2-3 categorías donde más gasta y que son evitables (no incluyas renta, servicios básicos, salud).
+  
+  💡 RECOMENDACIONES
+  Para cada gasto evitable, sugiere cuánto podría ahorrarse y qué hacer con ese dinero.
+  
+  🎯 CONEXIÓN CON TUS OBJETIVOS
+  Si el usuario tiene objetivos activos, menciona cuánto más rápido podría cumplirlos si ahorra lo recomendado. Menciona el objetivo por nombre e emoji.
+  
+  (Recuerda: después de los objetivos, simplemente escribe tu mensaje motivador de despedida sin ningún título).
   
   Sé específico con los números. Si no hay suficientes datos, dilo amablemente y anima al usuario a registrar más movimientos.
   
@@ -1887,7 +1925,7 @@ service cloud.firestore {
         await fetch('/api/user/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: currentUser.uid, settings: { accounts: updatedAccounts } })
+          body: safeJsonStringify({ userId: currentUser.uid, settings: { accounts: updatedAccounts } })
         });
       } catch (e) {
         console.error("Error saving to SQLite:", e);
@@ -1924,7 +1962,7 @@ service cloud.firestore {
         await fetch('/api/user/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: currentUser.uid, settings: { accounts: updatedAccounts } })
+          body: safeJsonStringify({ userId: currentUser.uid, settings: { accounts: updatedAccounts } })
         });
       } catch (e) {
         console.error("Error saving to SQLite:", e);
@@ -2415,7 +2453,7 @@ service cloud.firestore {
             fetch('/api/events/sync', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ events: chunk })
+              body: safeJsonStringify({ events: chunk })
             }).catch(e => console.error("Error syncing events to SQLite:", e));
           }
         }
@@ -2980,6 +3018,11 @@ service cloud.firestore {
       return msg.length > 150 ? msg.substring(0, 147) + '.' : msg;
     }
 
+    if (proposal.operation === 'batch_create') {
+      const msg = cleanText(proposal.result.user_feedback_message || '');
+      return msg.length > 150 ? msg.substring(0, 147) + '.' : msg;
+    }
+
     if (proposal.operation === 'create' && proposal.result.create?.event) {
       const event = proposal.result.create.event;
       const kindMap: Record<string, string> = {
@@ -3033,7 +3076,7 @@ service cloud.firestore {
     setInputText('');
   };
 
-  const processInput = async (input: { text?: string; audio?: string; audioMimeType?: string; image?: string; images?: string[]; instruction?: string }) => {
+  const processInput = async (input: { text?: string; audio?: string; audioMimeType?: string; image?: string; images?: string[]; pdf?: string; instruction?: string }) => {
     // ⚠️ Capturar el proposal ANTES de cualquier setState para evitar el stale closure bug.
     // Si usáramos `proposal` dentro del try/catch, React ya lo habría puesto a null
     // con setProposal(null) pero el closure aún tendría el valor viejo — enviando
@@ -3042,6 +3085,7 @@ service cloud.firestore {
 
     try {
       setIsProcessing(true);
+      setIsAnalyzingInput(true);
       setError(null);
       setProposal(null);
       
@@ -3242,6 +3286,7 @@ service cloud.firestore {
       }
     } finally {
       setIsProcessing(false);
+      setIsAnalyzingInput(false);
     }
   };
 
@@ -3300,14 +3345,76 @@ service cloud.firestore {
     }
   };
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleConfirmPdfUpload = async () => {
+    if (!pendingPdfFile) return;
+    setShowPdfWarning(false);
+    setIsProcessing(true);
+    setIsAnalyzingInput(true);
+    
+    try {
+      await processInput({ 
+        pdf: pendingPdfFile,
+        instruction: "Analiza este estado de cuenta bancario y extrae el SALDO FINAL del periodo. Genera un ÚNICO movimiento con las siguientes características: 1. Monto: El saldo final exacto (si es negativo, pon el monto en positivo pero cambia el tipo a gasto). 2. Tipo (kind): 'income' si el saldo es positivo, 'expense' si es negativo. 3. Categoría (category): 'Estado de Cuenta'. 4. Cuenta (account_name): El nombre del banco emisor (ej. 'Revolut'). 5. Concepto (description): 'Estado de cuenta de [Mes Inicio] a [Mes Fin]'. 6. Fecha (occurred_at): El último día del periodo del estado de cuenta (formato ISO). Devuelve una operación 'create' con este único movimiento, NO uses 'batch_create'."
+      });
+    } catch (err) {
+      console.error(err);
+      setError("Error al procesar el PDF.");
+      setIsProcessing(false);
+      setIsAnalyzingInput(false);
+    } finally {
+      setPendingPdfFile(null);
+    }
+  };
+
+  const handleCancelPdfUpload = () => {
+    setShowPdfWarning(false);
+    setPendingPdfFile(null);
+  };
+
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (isPremium === false && photoUsage >= 3) {
-      setError("Has alcanzado el límite de 3 fotos por mes del plan gratuito. ¡Mejora a Pro para uso ilimitado! 📸");
+      setError("Has alcanzado el límite de 3 fotos/documentos por mes del plan gratuito. ¡Mejora a Pro para uso ilimitado! 📸");
       return;
     }
 
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
+
+    // Check if there's a PDF
+    const pdfFile = files.find(f => f.type === 'application/pdf');
+    if (pdfFile) {
+      if (files.length > 1) {
+        setError("Por favor, sube solo un archivo PDF a la vez, sin mezclar con imágenes.");
+        e.target.value = '';
+        return;
+      }
+      
+      setShowCameraMenu(false);
+      
+      try {
+        const reader = new FileReader();
+        reader.readAsDataURL(pdfFile);
+        reader.onloadend = async () => {
+          if (typeof reader.result === 'string') {
+            const base64Pdf = reader.result.split(',')[1];
+            setPendingPdfFile(base64Pdf);
+            setShowPdfWarning(true);
+          } else {
+            setError("Error al leer el archivo PDF.");
+          }
+        };
+        reader.onerror = () => {
+          setError("Error al leer el archivo PDF.");
+        };
+      } catch (err) {
+        console.error(err);
+        setError("Error al procesar el PDF.");
+      } finally {
+        e.target.value = '';
+        incrementUsage("photo"); // Using photo quota for now
+      }
+      return;
+    }
 
     if (files.length === 1) {
       const file = files[0];
@@ -3331,6 +3438,7 @@ service cloud.firestore {
 
   const handleProcessMultipleImages = async (mode: 'single' | 'multiple') => {
     setIsProcessing(true);
+    setIsAnalyzingInput(true);
     
     try {
       const base64Images = await Promise.all(selectedFiles.map(file => {
@@ -3357,6 +3465,7 @@ service cloud.firestore {
       console.error(e);
       setError("Error al procesar las imágenes.");
       setIsProcessing(false);
+      setIsAnalyzingInput(false);
     } finally {
       setShowImageGroupModal(false);
       setSelectedFiles([]);
@@ -3410,6 +3519,7 @@ service cloud.firestore {
   const handleConfirmCrop = async () => {
     if (imgRef.current && completedCrop) {
       setIsProcessing(true);
+      setIsAnalyzingInput(true);
       try {
         const croppedImage = await getCroppedImg(imgRef.current, completedCrop);
         const response = await fetch(croppedImage);
@@ -3438,6 +3548,7 @@ service cloud.firestore {
         console.error(e);
         setError("Error al procesar la imagen recortada.");
         setIsProcessing(false);
+        setIsAnalyzingInput(false);
       }
     }
   };
@@ -3486,6 +3597,74 @@ service cloud.firestore {
         setTimeout(() => setSuccess(null), 4000);
         setIsProcessing(false);
         return;
+      } else if (proposal.operation === 'batch_create' && proposal.result.batch_create?.events) {
+        const eventsToSave = proposal.result.batch_create.events
+          .filter((ev: any) => ev.amount != null)
+          .map((ev: any) => {
+          const normalized = { 
+            ...ev,
+            amount: Number(ev.amount) || 0,
+            occurred_at: ev.occurred_at || new Date().toISOString(),
+            user_id: user.id,
+            created_at: new Date().toISOString(),
+            batch_id: proposal.shared_group_id
+          };
+          if (!normalized.account_name && normalized.accounts?.primary_account_ref) {
+            normalized.account_name = typeof normalized.accounts.primary_account_ref === 'string' 
+              ? normalized.accounts.primary_account_ref 
+              : normalized.accounts.primary_account_ref.name;
+          }
+          delete normalized.isUpdate;
+          Object.keys(normalized).forEach(key => {
+            if (normalized[key] === undefined) delete normalized[key];
+          });
+          return normalized;
+        });
+
+        if (eventsToSave.length > 0) {
+          const batch = writeBatch(db);
+          eventsToSave.forEach((ev: any) => {
+            const newDocRef = doc(collection(db, 'events'));
+            batch.set(newDocRef, ev);
+          });
+          await batch.commit();
+          
+          // Auto-sync categories
+          const newCategories = eventsToSave.map((ev: any) => ev.category).filter(Boolean) as string[];
+          const uniqueNewCategories = Array.from(new Set(newCategories));
+          const updatedCats = Array.from(new Set([...userCategories, ...uniqueNewCategories])).sort();
+          if (updatedCats.length > userCategories.length) {
+            setUserCategories(updatedCats);
+            setDoc(doc(db, 'users', user.uid), { categories: updatedCats }, { merge: true }).catch(console.error);
+          }
+          
+          await fetchData();
+          setSuccess(`¡${eventsToSave.length} movimientos registrados con éxito!`);
+          speakText(`¡Listo! Se registraron ${eventsToSave.length} movimientos.`);
+          setTimeout(() => setSuccess(null), 4000);
+          
+          const remainingProposals = proposal.pending_proposals || [];
+          if (remainingProposals.length > 0) {
+            const nextProposal = remainingProposals[0];
+            nextProposal.pending_proposals = remainingProposals.slice(1);
+            setProposal(nextProposal);
+            
+            if (lastInputWasVoiceRef.current) {
+              const speechText = buildSpeechFromProposal(nextProposal);
+              speakText(speechText);
+            }
+          } else {
+            setProposal(null);
+          }
+          
+          setIsProcessing(false);
+          return;
+        } else {
+          setProposal(null);
+          setError("No se encontraron movimientos válidos para registrar.");
+          setIsProcessing(false);
+          return;
+        }
       }
 
       if (proposal.operation === 'query') {
@@ -3495,6 +3674,8 @@ service cloud.firestore {
       }
 
       if (!body) {
+        setProposal(null);
+        setError("No se encontraron movimientos válidos para registrar.");
         setIsProcessing(false);
         return;
       }
@@ -3621,7 +3802,7 @@ service cloud.firestore {
           fetch('/api/notifications/check-goals', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ firebase_uid: user.uid })
+            body: safeJsonStringify({ firebase_uid: user.uid })
           }).catch(e => console.error('Error checking goals:', e));
         }
 
@@ -3889,7 +4070,7 @@ service cloud.firestore {
         const res = await fetch(`/api/events/${id}?userId=${user.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(cleanedData)
+          body: safeJsonStringify(cleanedData)
         });
         if (!res.ok) throw new Error("Error updating SQLite event");
       } else {
@@ -3901,7 +4082,7 @@ service cloud.firestore {
         const res = await fetch(`/api/events/${id}?userId=${user.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(cleanedData)
+          body: safeJsonStringify(cleanedData)
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -3946,7 +4127,7 @@ service cloud.firestore {
               const res = await fetch(`/api/events/${eventDoc.id}?userId=${user.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(linkedUpdates)
+                body: safeJsonStringify(linkedUpdates)
               });
               if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
@@ -3962,7 +4143,7 @@ service cloud.firestore {
           const res = await fetch(`/api/events/group/${updatedEvent.group_id}?userId=${user.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(cleanedData)
+            body: safeJsonStringify(cleanedData)
           });
           if (!res.ok) throw new Error("Error updating SQLite group");
         }
@@ -4671,6 +4852,30 @@ service cloud.firestore {
 
       {/* Proposal Area */}
       <AnimatePresence>
+        {isAnalyzingInput && !proposal && (
+          <motion.div
+            ref={loadingRef}
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border-2 border-emerald-100 dark:border-emerald-900 overflow-hidden"
+          >
+            <div className="px-6 py-4 border-b bg-emerald-50 dark:bg-emerald-900/30 border-emerald-100 dark:border-emerald-900 flex justify-between items-center">
+              <h3 className="font-semibold flex items-center gap-2 text-emerald-800 dark:text-emerald-400">
+                <Loader2 size={18} className="animate-spin" />
+                Procesando información...
+              </h3>
+            </div>
+            <div className="p-6 space-y-6">
+              <div className="flex flex-col items-center justify-center py-12 gap-4">
+                <Loader2 className="animate-spin text-emerald-500" size={40} />
+                <p className="text-gray-500 font-medium italic">
+                  Analizando el contenido, por favor espera...
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        )}
         {proposal && (
           <motion.div 
             ref={proposalRef}
@@ -4689,6 +4894,8 @@ service cloud.firestore {
                 ? "border-emerald-100 dark:border-emerald-900"
                 : proposal?.operation === 'query'
                 ? "border-violet-100 dark:border-violet-900"
+                : proposal?.operation === 'batch_create'
+                ? "border-emerald-100 dark:border-emerald-900"
                 : proposal?.operation === 'create_goal'
                 ? "border-emerald-100 dark:border-emerald-900"
                 : "border-gray-100 dark:border-gray-800"
@@ -4706,6 +4913,8 @@ service cloud.firestore {
                 ? "bg-red-50 dark:bg-red-900/30 border-red-100 dark:border-red-900"
                 : proposal?.operation === 'query'
                 ? "bg-violet-50 dark:bg-violet-900/30 border-violet-100 dark:border-violet-900"
+                : proposal?.operation === 'batch_create'
+                ? "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-100 dark:border-emerald-900"
                 : proposal?.operation === 'create_goal'
                 ? "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-100 dark:border-emerald-900"
                 : "bg-gray-50 dark:bg-gray-900 border-gray-100 dark:border-gray-800"
@@ -4722,6 +4931,8 @@ service cloud.firestore {
                   ? "text-red-800 dark:text-red-400"
                   : proposal?.operation === 'query'
                   ? "text-violet-800 dark:text-violet-400"
+                  : proposal?.operation === 'batch_create'
+                  ? "text-emerald-800 dark:text-emerald-400"
                   : proposal?.operation === 'create_goal'
                   ? "text-emerald-800 dark:text-emerald-400"
                   : "text-gray-800 dark:text-gray-200"
@@ -4731,9 +4942,10 @@ service cloud.firestore {
                  ['income', 'refund'].includes(proposal?.result?.create?.event?.kind || '') ? <ArrowDownLeft size={18} /> :
                  ['expense', 'loss'].includes(proposal?.result?.create?.event?.kind || '') ? <ArrowUpRight size={18} /> :
                  proposal?.operation === 'query' ? <Search size={18} /> :
+                 proposal?.operation === 'batch_create' ? <Check size={18} /> :
                  proposal?.operation === 'create_goal' ? <Target size={18} /> :
                  <Check size={18} />} 
-                {proposal?.operation === 'query' ? 'Consulta' : proposal?.operation === 'create_goal' ? 'Nuevo Objetivo' : 'Propuesta de Movimiento'} {remainingPendingCount > 0 ? `(Pendientes: ${remainingPendingCount + 1})` : ''}
+                {proposal?.operation === 'query' ? 'Consulta' : proposal?.operation === 'batch_create' ? 'Resumen de Estado de Cuenta' : proposal?.operation === 'create_goal' ? 'Nuevo Objetivo' : 'Propuesta de Movimiento'} {remainingPendingCount > 0 ? `(Pendientes: ${remainingPendingCount + 1})` : ''}
               </h3>
               <button onClick={() => { setProposal(null); speakText('Entendido, propuesta descartada.'); }} className={cn(
                 "p-1 rounded-full transition-colors",
@@ -4747,6 +4959,8 @@ service cloud.firestore {
                   ? "text-red-600 hover:bg-red-100 dark:hover:bg-red-800"
                   : proposal?.operation === 'query'
                   ? "text-violet-600 hover:bg-violet-100 dark:hover:bg-violet-800"
+                  : proposal?.operation === 'batch_create'
+                  ? "text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-800"
                   : proposal?.operation === 'create_goal'
                   ? "text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-800"
                   : "text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800"
@@ -4755,21 +4969,35 @@ service cloud.firestore {
               </button>
             </div>
             <div className="p-6 space-y-6">
-              {isProcessing && !proposal ? (
-                <div className="flex flex-col items-center justify-center py-12 gap-4">
-                  <Loader2 className="animate-spin text-emerald-500" size={40} />
-                  <p className="text-gray-500 font-medium italic">Procesando propuesta...</p>
+              <div className="text-gray-700 dark:text-gray-300 italic prose dark:prose-invert max-w-none [&>p]:m-0 [&>p]:inline">
+                  <ReactMarkdown>{proposal?.result?.user_feedback_message || 'He preparado una propuesta para tu movimiento.'}</ReactMarkdown>
                 </div>
-              ) : (
-                <>
-                  <div className="text-gray-700 dark:text-gray-300 italic prose dark:prose-invert max-w-none [&>p]:m-0 [&>p]:inline">
-                    <ReactMarkdown>{proposal?.result?.user_feedback_message || 'He preparado una propuesta para tu movimiento.'}</ReactMarkdown>
+                
+                {(!proposal?.operation || (proposal?.operation === 'create' && !proposal?.result?.create?.event) || (proposal?.operation === 'batch_create' && !proposal?.result?.batch_create?.events?.length)) && (
+                  <div className="p-4 bg-red-50 dark:bg-red-900/30 border border-red-100 dark:border-red-900 rounded-xl text-red-800 dark:text-red-400 text-sm font-medium flex items-start gap-3">
+                    <AlertCircle size={18} className="mt-0.5 flex-shrink-0" />
+                    <p>No se pudo extraer la información. Por favor, intenta de nuevo con más detalles o un documento más claro.</p>
                   </div>
-                  
-                  {(!proposal?.operation || (proposal?.operation === 'create' && !proposal?.result?.create?.event)) && (
-                    <div className="p-4 bg-red-50 dark:bg-red-900/30 border border-red-100 dark:border-red-900 rounded-xl text-red-800 dark:text-red-400 text-sm font-medium flex items-start gap-3">
-                      <AlertCircle size={18} className="mt-0.5 flex-shrink-0" />
-                      <p>No se pudo extraer la información del movimiento. Por favor, intenta de nuevo con más detalles o una imagen más clara.</p>
+                )}
+
+                  {proposal?.operation === 'batch_create' && proposal?.result?.batch_create?.events && (
+                    <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-100 dark:border-gray-700">
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Se encontraron <span className="font-bold text-emerald-600 dark:text-emerald-400">{proposal.result.batch_create.events.length}</span> movimientos listos para registrar.
+                      </p>
+                      <div className="max-h-40 overflow-y-auto space-y-2 pr-2">
+                        {proposal.result.batch_create.events.map((ev: any, idx: number) => (
+                          <div key={idx} className="flex justify-between items-center text-xs p-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-100 dark:border-gray-700">
+                            <span className="font-medium text-gray-800 dark:text-gray-200 truncate pr-2">{ev.description || ev.merchant?.name || 'Movimiento'}</span>
+                            <span className={cn(
+                              "font-bold whitespace-nowrap",
+                              ['income', 'refund'].includes(ev.kind) ? "text-emerald-600 dark:text-emerald-400" : "text-gray-900 dark:text-white"
+                            )}>
+                              {['income', 'refund'].includes(ev.kind) ? '+' : ''}{new Intl.NumberFormat('es-MX', { style: 'currency', currency: ev.currency || 'MXN' }).format(ev.amount || 0)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
 
@@ -4872,10 +5100,10 @@ service cloud.firestore {
               <div className="flex gap-3 pt-2">
                 <button 
                   onClick={confirmProposal}
-                  disabled={proposal?.status === 'needs_clarification' || isProcessing || !proposal?.operation || (proposal?.operation === 'create' && !proposal?.result?.create?.event)}
+                  disabled={proposal?.status === 'needs_clarification' || isProcessing || !proposal?.operation || (proposal?.operation === 'create' && !proposal?.result?.create?.event) || (proposal?.operation === 'batch_create' && !proposal?.result?.batch_create?.events?.length)}
                   className={cn(
                     "flex-1 py-3 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all",
-                    proposal?.status === 'ready_to_confirm' && !isProcessing && proposal?.operation && !(proposal?.operation === 'create' && !proposal?.result?.create?.event)
+                    proposal?.status === 'ready_to_confirm' && !isProcessing && proposal?.operation && !(proposal?.operation === 'create' && !proposal?.result?.create?.event) && !(proposal?.operation === 'batch_create' && !proposal?.result?.batch_create?.events?.length)
                     ? (['debt_increase', 'debt_payment'].includes(proposal?.result?.create?.event?.kind || '') 
                         ? 'bg-amber-600 text-white hover:bg-amber-700 shadow-md' 
                         : ['loan_given', 'loan_repayment_received'].includes(proposal?.result?.create?.event?.kind || '')
@@ -4886,6 +5114,8 @@ service cloud.firestore {
                         ? 'bg-red-600 text-white hover:bg-red-700 shadow-md'
                         : proposal?.operation === 'query'
                         ? 'bg-violet-600 text-white hover:bg-violet-700 shadow-md'
+                        : proposal?.operation === 'batch_create'
+                        ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md'
                         : proposal?.operation === 'create_goal'
                         ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md'
                         : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md')
@@ -4893,7 +5123,7 @@ service cloud.firestore {
                   )}
                 >
                   {isProcessing && <Loader2 className="animate-spin" size={18} />}
-                  {proposal?.operation === 'query' ? 'Entendido' : (remainingPendingCount > 0 ? 'Confirmar y Siguiente' : 'Confirmar')}
+                  {proposal?.operation === 'query' ? 'Entendido' : proposal?.operation === 'batch_create' ? 'Confirmar Todos' : (remainingPendingCount > 0 ? 'Confirmar y Siguiente' : 'Confirmar')}
                 </button>
                 <button 
                   onClick={() => {
@@ -4906,10 +5136,8 @@ service cloud.firestore {
                   Descartar
                 </button>
               </div>
-            </>
-          )}
-        </div>
-      </motion.div>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -7365,6 +7593,15 @@ service cloud.firestore {
                                 <Upload size={18} className="text-blue-500" />
                                 Elegir Imagen
                               </button>
+                              <div className="h-px bg-gray-100 dark:bg-gray-700" />
+                              <button 
+                                type="button"
+                                onClick={() => { pdfInputRef.current?.click(); setShowCameraMenu(false); }}
+                                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors text-sm font-bold dark:text-white whitespace-nowrap"
+                              >
+                                <FileText size={18} className="text-red-500" />
+                                Subir PDF
+                              </button>
                             </motion.div>
                           )}
                         </AnimatePresence>
@@ -7410,7 +7647,8 @@ service cloud.firestore {
                   )}
                 </AnimatePresence>
 
-                <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*" multiple className="hidden" />
+                <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*,application/pdf" multiple className="hidden" />
+                <input type="file" ref={pdfInputRef} onChange={handleImageSelect} accept="application/pdf" className="hidden" />
                 <input type="file" ref={cameraInputRef} onChange={handleImageSelect} accept="image/*" capture="environment" className="hidden" />
               </div>
             </form>
@@ -7891,6 +8129,45 @@ service cloud.firestore {
                         Exportar
                       </>
                     )}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showPdfWarning && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-md overflow-hidden border border-gray-100 dark:border-gray-700"
+            >
+              <div className="p-6">
+                <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center mb-4 mx-auto">
+                  <AlertTriangle className="text-amber-600 dark:text-amber-400" size={24} />
+                </div>
+                <h3 className="text-xl font-bold text-center text-gray-900 dark:text-white mb-2">
+                  Advertencia de Estado de Cuenta
+                </h3>
+                <p className="text-center text-gray-600 dark:text-gray-300 mb-6">
+                  Si subes un estado de cuenta, asegúrate de <strong>no haber registrado ningún movimiento manual</strong> de ese mismo mes. Esto es para evitar duplicados y que tus saldos concuerden correctamente.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleCancelPdfUpload}
+                    className="flex-1 py-3 rounded-xl font-semibold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleConfirmPdfUpload}
+                    className="flex-1 py-3 rounded-xl font-semibold bg-amber-500 hover:bg-amber-600 text-white transition-all shadow-lg shadow-amber-500/30"
+                  >
+                    Entendido, continuar
                   </button>
                 </div>
               </div>

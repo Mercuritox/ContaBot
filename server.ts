@@ -92,11 +92,21 @@ async function calculateDailyInterest() {
   console.log("Calculando intereses diarios...");
   const today = new Date().toISOString().split('T')[0];
   
-  const users = db.prepare("SELECT id, settings FROM users").all();
+  let usersSnap;
+  try {
+    const { getFirestore } = await import('firebase-admin/firestore');
+    const adminDb = getFirestore();
+    usersSnap = await adminDb.collection('users').get();
+  } catch (err) {
+    console.error("Error fetching users from Firestore:", err);
+    return;
+  }
+  
+  console.log(`Encontrados ${usersSnap.size} usuarios en Firestore para procesar.`);
   
   const insertEvent = db.prepare(`
-    INSERT INTO events (id, user_id, amount, description, category, kind, occurred_at, account_name, currency, timezone)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO events (id, user_id, amount, description, category, kind, occurred_at, account_name, currency, timezone, raw_data)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   const checkDuplicate = db.prepare(`
@@ -104,19 +114,32 @@ async function calculateDailyInterest() {
     WHERE user_id = ? AND account_name = ? AND category = 'Interés' AND date(occurred_at) = ?
   `);
 
-  for (const user of users as any[]) {
-    if (!user.settings) continue;
+  for (const doc of usersSnap.docs) {
+    const userId = doc.id;
+    const userData = doc.data();
+    const accounts = userData.accounts || [];
+    
+    if (accounts.length === 0) {
+      continue;
+    }
+    
     try {
-      const settings = JSON.parse(user.settings);
-      const accounts = settings.accounts || [];
+      console.log(`Usuario ${userId} tiene ${accounts.length} cuentas.`);
       
       for (const account of accounts) {
+        console.log(`Revisando cuenta: ${account.name}, tipo: ${account.type}, tasa: ${account.interest_rate}`);
         if ((account.type === 'savings' || account.type === 'Inversión') && account.interest_rate) {
           const rate = parseFloat(account.interest_rate);
-          if (isNaN(rate) || rate <= 0) continue;
+          if (isNaN(rate) || rate <= 0) {
+            console.log(`Tasa inválida para cuenta ${account.name}: ${account.interest_rate}`);
+            continue;
+          }
 
-          const duplicate = checkDuplicate.get(user.id, account.name, today);
-          if (duplicate) continue;
+          const duplicate = checkDuplicate.get(userId, account.name, today);
+          if (duplicate) {
+            console.log(`Interés ya registrado hoy para cuenta ${account.name} (Usuario ${userId})`);
+            continue;
+          }
 
           const balanceRow = db.prepare(`
             SELECT 
@@ -126,19 +149,24 @@ async function calculateDailyInterest() {
               SUM(CASE WHEN kind = 'debt_payment' THEN amount ELSE 0 END) as balance
             FROM events
             WHERE user_id = ? AND account_name = ?
-          `).get(user.id, account.name) as any;
+          `).get(userId, account.name) as any;
 
           const balance = balanceRow?.balance || 0;
-          if (balance <= 0) continue;
+          console.log(`Saldo actual de la cuenta ${account.name}: ${balance}`);
+          if (balance <= 0) {
+            console.log(`Saldo no positivo (${balance}) para cuenta ${account.name}, no se calcula interés.`);
+            continue;
+          }
 
           const dailyInterest = balance * (rate / 365 / 100);
+          console.log(`Interés calculado para ${account.name}: ${dailyInterest} (Tasa: ${rate}%, Saldo: ${balance})`);
           
           if (dailyInterest > 0) {
             const eventId = "int_" + Date.now() + "_" + Math.random().toString(36).substring(7);
             const occurred_at = new Date().toISOString();
             const eventData = {
               id: eventId,
-              user_id: user.id,
+              user_id: userId,
               amount: parseFloat(dailyInterest.toFixed(2)),
               description: "Interés generado automáticamente",
               category: "Interés",
@@ -148,12 +176,14 @@ async function calculateDailyInterest() {
               currency: "MXN",
               timezone: "UTC",
               merchant: { name: account.name },
-              accounts: { to_account_ref: { name: account.name } }
+              accounts: { to_account_ref: { name: account.name } },
+              is_interest: true,
+              created_at: occurred_at
             };
 
             insertEvent.run(
               eventId,
-              user.id,
+              userId,
               eventData.amount,
               eventData.description,
               eventData.category,
@@ -161,30 +191,36 @@ async function calculateDailyInterest() {
               eventData.occurred_at,
               eventData.account_name,
               eventData.currency,
-              eventData.timezone
+              eventData.timezone,
+              JSON.stringify(eventData)
             );
 
             // Sync to Firestore
             try {
+              const { getFirestore } = await import('firebase-admin/firestore');
+              const adminDb = getFirestore();
               const docPath = `events/${eventId}`;
-              await firestore.doc(docPath).set({
+              await adminDb.doc(docPath).set({
                 ...eventData,
-                user_id: user.id,
-                updated_at: admin.firestore.FieldValue.serverTimestamp()
+                user_id: userId,
+                updated_at: adminDb.FieldValue ? adminDb.FieldValue.serverTimestamp() : new Date().toISOString()
               });
-              console.log(`✅ Interés sincronizado a Firestore para ${user.id}: ${account.name}`);
+              console.log(`✅ Interés sincronizado a Firestore para ${userId}: ${account.name}`);
             } catch (error) {
-              console.error(`❌ Error sincronizando interés a Firestore para ${user.id}:`, error);
+              console.error(`❌ Error sincronizando interés a Firestore para ${userId}:`, error);
             }
 
-            console.log(`💰 Interés aplicado a ${user.id} - ${account.name}: $${dailyInterest.toFixed(2)}`);
+            console.log(`💰 Interés aplicado a ${userId} - ${account.name}: $${dailyInterest.toFixed(2)}`);
           }
+        } else {
+          console.log(`Cuenta ${account.name} no califica para interés (tipo: ${account.type}, tasa: ${account.interest_rate}).`);
         }
       }
     } catch (e) {
-      console.error("Error calculando interés para usuario", user.id, e);
+      console.error("Error calculando interés para usuario", userId, e);
     }
   }
+  console.log("Cálculo de intereses diarios finalizado.");
 }
 
 // ============================================================
@@ -2038,6 +2074,16 @@ async function startServer() {
     } catch (err) {
       console.error('Error checking goals:', err);
       res.status(500).json({ error: 'Error al verificar metas' });
+    }
+  });
+
+  app.post('/api/interest/trigger-daily', async (req, res) => {
+    try {
+      await calculateDailyInterest();
+      res.json({ success: true, message: 'Cálculo de intereses diarios ejecutado.' });
+    } catch (err) {
+      console.error('Error triggering daily interest:', err);
+      res.status(500).json({ error: 'Error al calcular intereses diarios' });
     }
   });
 

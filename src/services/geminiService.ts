@@ -100,7 +100,7 @@ REGLAS CRÍTICAS
   3. ACTUALIZA los campos correspondientes en el objeto JSON (description, category, accounts.primary_account_ref.name). No basta con mencionarlo en el mensaje de texto.
   4. PRESERVA el "id" si ya existía.
 
-RECONOCIMIENTO DE TICKETS (CRÍTICO):
+RECONOCIMIENTO DE TICKETS Y ESTADOS DE CUENTA (CRÍTICO):
 1. Si el input es una imagen de un ticket, DEBES analizarla a fondo para extraer:
    - Comercio (Merchant): Busca logotipos o nombres en la parte superior.
    - Concepto (Description): Lista de artículos o el resumen de la compra.
@@ -109,6 +109,16 @@ RECONOCIMIENTO DE TICKETS (CRÍTICO):
    - SIEMPRE intenta asignar la cuenta correcta basándote en "known_entities.accounts". 
    - SI EL MÉTODO DE PAGO NO ESTÁ EN "known_entities", DEBES sugerirlo igualmente en "accounts.primary_account_ref.name" (ej. "Banorte Débito") y el sistema lo tratará como una sugerencia de nueva cuenta.
    - Si el ticket indica que es una TARJETA DE CRÉDITO, el "kind" DEBE ser "debt_increase".
+2. Si el input es un PDF de un ESTADO DE CUENTA BANCARIO:
+   - Tu función es la de un Analista de Datos Financieros de Precisión.
+   - EXTRAE las transacciones (fecha, concepto, monto).
+   - IDENTIFICA el banco emisor.
+   - IGNORA movimientos "en tránsito" o "pendientes".
+   - AGRUPA transferencias entre cuentas propias si es posible.
+   - Usa la operación "batch_create" para devolver todas las transacciones extraídas.
+   - En "result.batch_create.events", incluye un array con todos los movimientos a registrar (cada uno con la estructura de un evento).
+   - En "user_feedback_message", presenta un RESUMEN FINANCIERO CONSOLIDADO para que el usuario lo revise y confirme (ej. "Encontré 15 gastos y 2 ingresos en tu estado de cuenta de BBVA. ¿Deseas registrarlos todos?").
+   - REGLA DE PRIVACIDAD: NO extraigas ni menciones números de cuenta completos, nombres de titulares ni direcciones. Enfócate solo en Fecha, Concepto y Monto.
 
 ESTRUCTURA DEL EVENTO
 - description: El concepto, comercio o detalle del gasto (ej. "Uber Eats Sushi", "Coca 3L", "Oxxo").
@@ -147,7 +157,7 @@ JSON SCHEMA EXPECTED:
 (SOLO INCLUYE el objeto correspondiente a la operación seleccionada. Si operation es 'create', incluye 'create' y omite el resto. NUNCA omitas el objeto de la operación seleccionada.)
 {
   "status": "ready_to_confirm" | "needs_clarification",
-  "operation": "create" | "update" | "query" | "create_goal",
+  "operation": "create" | "update" | "query" | "create_goal" | "batch_create",
   "follow_up_questions": string[],
   "result": {
     "user_feedback_message": string,
@@ -165,6 +175,20 @@ JSON SCHEMA EXPECTED:
           "primary_account_ref": { "name": string }
         }
       } 
+    },
+    "batch_create": {
+      "events": [
+        {
+          "kind": "expense" | "income" | "transfer" | "refund" | "debt_increase" | "debt_payment" | "loan_given" | "loan_repayment_received" | "loss",
+          "amount": number | null,
+          "currency": string,
+          "description": string,
+          "category": string,
+          "occurred_at": string,
+          "merchant": { "name": string },
+          "accounts": { "primary_account_ref": { "name": string } }
+        }
+      ]
     },
     "update": { "target": { "event_id": string }, "patch": [ { "path": string, "new_value": any } ] },
     "query": { "intent": string, "counterparty_name"?: string, "account_name"?: string },
@@ -285,6 +309,7 @@ export async function processMultimodalInput(
     audioMimeType?: string; 
     image?: string; 
     images?: string[]; 
+    pdf?: string;
     instruction?: string 
   },
   context: GeminiContext,
@@ -325,6 +350,15 @@ export async function processMultimodalInput(
     });
   }
 
+  if (input.pdf) {
+    parts.push({
+      inlineData: {
+        mimeType: "application/pdf",
+        data: input.pdf,
+      },
+    });
+  }
+
   let promptText = `
 Context: ${safeJsonStringify(context)}
 Input: Process this input according to the system instructions.
@@ -336,9 +370,10 @@ Input: Process this input according to the system instructions.
 
   parts.push({ text: promptText });
 
-  let inputType: 'text' | 'photo' | 'audio' = 'text';
+  let inputType: 'text' | 'photo' | 'audio' | 'pdf' = 'text';
   if (input.audio) inputType = 'audio';
   else if (input.image || (input.images && input.images.length > 0)) inputType = 'photo';
+  else if (input.pdf) inputType = 'pdf';
 
   const apiKey = (window as any)._SERVER_GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_GOOGLE_API_KEY;
   if (!apiKey) {
@@ -385,11 +420,23 @@ Input: Process this input according to the system instructions.
 
   // Normalización idéntica a la versión anterior
   if (!parsed.operation) {
-    if (parsed.result?.query) parsed.operation = 'query';
+    if (parsed.result?.batch_create) parsed.operation = 'batch_create';
+    else if (parsed.result?.query) parsed.operation = 'query';
     else if (parsed.result?.create_goal) parsed.operation = 'create_goal';
     else if (parsed.result?.update) parsed.operation = 'update';
     else if (parsed.result?.create || parsed.result?.event || parsed.result?.kind || parsed.result?.amount !== undefined) parsed.operation = 'create';
     else if (parsed.result?.user_feedback_message) parsed.operation = 'query';
+  }
+
+  if (parsed?.events && !parsed.result?.batch_create) {
+    if (!parsed.result) parsed.result = {};
+    parsed.result.batch_create = { events: parsed.events };
+    delete parsed.events;
+  }
+
+  if (parsed?.result && !parsed.result.batch_create && parsed.result.events) {
+    parsed.result.batch_create = { events: parsed.result.events };
+    delete parsed.result.events;
   }
 
   if (parsed?.result && !parsed.result.create) {

@@ -27,12 +27,15 @@ export interface Event {
 
 export interface GeminiResponse {
   status: 'ready_to_confirm' | 'needs_clarification';
-  operation: 'create' | 'update' | 'query' | 'create_goal';
+  operation: 'create' | 'update' | 'query' | 'create_goal' | 'batch_create';
   follow_up_questions: string[];
   input_modalities_detected: string[];
   result: {
     create?: {
       event: Event;
+    };
+    batch_create?: {
+      events: Event[];
     };
     update?: {
       target: { event_id: string; candidate_event_ids?: string[] };
