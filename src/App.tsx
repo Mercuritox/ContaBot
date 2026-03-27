@@ -302,6 +302,7 @@ service cloud.firestore {
   const [isVoiceProcessing, setIsVoiceProcessing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isAnalyzingInput, setIsAnalyzingInput] = useState(false);
+  const [isProcessingPdf, setIsProcessingPdf] = useState(false);
   const [editingEvent, setEditingEvent] = useState<any>(null);
   const [proposal, setProposal] = useState<GeminiResponse | null>(null);
   const [recentEvents, setRecentEvents] = useState<any[]>([]);
@@ -3349,7 +3350,7 @@ service cloud.firestore {
     if (!pendingPdfFile) return;
     setShowPdfWarning(false);
     setIsProcessing(true);
-    setIsAnalyzingInput(true);
+    setIsProcessingPdf(true);
     
     try {
       await processInput({ 
@@ -3360,9 +3361,10 @@ service cloud.firestore {
       console.error(err);
       setError("Error al procesar el PDF.");
       setIsProcessing(false);
-      setIsAnalyzingInput(false);
+      setIsProcessingPdf(false);
     } finally {
       setPendingPdfFile(null);
+      setIsProcessingPdf(false);
     }
   };
 
@@ -4852,27 +4854,19 @@ service cloud.firestore {
 
       {/* Proposal Area */}
       <AnimatePresence>
-        {isAnalyzingInput && !proposal && (
+        {isProcessingPdf && !proposal && (
           <motion.div
             ref={loadingRef}
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border-2 border-emerald-100 dark:border-emerald-900 overflow-hidden"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-emerald-100 dark:border-emerald-900/30 overflow-hidden"
           >
-            <div className="px-6 py-4 border-b bg-emerald-50 dark:bg-emerald-900/30 border-emerald-100 dark:border-emerald-900 flex justify-between items-center">
-              <h3 className="font-semibold flex items-center gap-2 text-emerald-800 dark:text-emerald-400">
-                <Loader2 size={18} className="animate-spin" />
-                Procesando información...
-              </h3>
-            </div>
-            <div className="p-6 space-y-6">
-              <div className="flex flex-col items-center justify-center py-12 gap-4">
-                <Loader2 className="animate-spin text-emerald-500" size={40} />
-                <p className="text-gray-500 font-medium italic">
-                  Analizando el contenido, por favor espera...
-                </p>
-              </div>
+            <div className="px-4 py-3 flex items-center gap-3">
+              <Loader2 className="animate-spin text-emerald-500" size={20} />
+              <p className="text-sm font-medium text-gray-600 dark:text-gray-300">
+                Analizando estado de cuenta...
+              </p>
             </div>
           </motion.div>
         )}
