@@ -52,7 +52,9 @@ import {
   RefreshCw,
   Download,
   Bell,
-  AlertTriangle
+  BellOff,
+  AlertTriangle,
+  Edit2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
@@ -107,7 +109,7 @@ import {
 } from 'firebase/firestore';
 import { processMultimodalInput, GeminiContext, safeJsonStringify } from './services/geminiService';
 import PlanesView from './components/PlanesView';
-import { GeminiResponse, Event, Goal } from './types';
+import { GeminiResponse, Event, Goal, Reminder } from './types';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -263,6 +265,15 @@ const HomeSkeleton = () => (
 export default function App() {
   const [view, setView] = useState<View>('auth');
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [isAddingReminder, setIsAddingReminder] = useState(false);
+  const [reminderForm, setReminderForm] = useState<Partial<Reminder>>({
+    account_name: '',
+    type: 'payment_due',
+    date: new Date().toISOString().split('T')[0],
+    advance_days: 5
+  });
+  const [isDeletingReminder, setIsDeletingReminder] = useState<string | null>(null);
   const [isAddingGoal, setIsAddingGoal] = useState(false);
   const [goalForm, setGoalForm] = useState<Partial<Goal>>({
     name: '',
@@ -1772,6 +1783,28 @@ service cloud.firestore {
     }
   };
 
+  const fetchReminders = async () => {
+    if (!user?.id) return;
+    try {
+      const q = query(collection(db, 'reminders'), where('user_id', '==', user.id), orderBy('created_at', 'desc'));
+      const querySnapshot = await getDocs(q);
+      const remindersList: Reminder[] = [];
+      querySnapshot.forEach((doc) => {
+        remindersList.push({ id: doc.id, ...doc.data() } as Reminder);
+      });
+      setReminders(remindersList);
+    } catch (err: any) {
+      console.error("Error fetching reminders:", err);
+      if (err.message && (err.message.includes('permissions') || err.message.includes('insufficient'))) {
+        setError("Error de permisos al leer Recordatorios. Asegúrate de actualizar las Reglas de Firestore.");
+      } else if (err.message && err.message.includes('index')) {
+        setError("Falta un índice para Recordatorios. Por favor, créalo en la consola de Firebase.");
+      } else {
+        setError("Error al cargar los recordatorios.");
+      }
+    }
+  };
+
   const fetchGoals = async () => {
     if (!user?.id) return;
     try {
@@ -1886,6 +1919,77 @@ service cloud.firestore {
       } else {
         setError('Error al actualizar el perfil');
       }
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleSaveReminder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reminderForm.account_name || !reminderForm.date || !reminderForm.advance_days) {
+      setError('Todos los campos son requeridos');
+      return;
+    }
+
+    // Validate that the date is not in the past
+    const selectedDate = new Date(reminderForm.date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Reset time to start of day for accurate comparison
+    
+    // Adjust for timezone differences if necessary, but since input type="date" returns YYYY-MM-DD,
+    // creating a new Date from it sets it to midnight UTC.
+    // To compare accurately with local 'today', we need to parse the parts.
+    const [year, month, day] = reminderForm.date.split('-').map(Number);
+    const localSelectedDate = new Date(year, month - 1, day);
+
+    if (localSelectedDate < today) {
+      setError('No puedes registrar un recordatorio para una fecha anterior al día de hoy.');
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error('No hay usuario autenticado');
+
+      const reminderData = {
+        user_id: currentUser.uid,
+        account_name: reminderForm.account_name,
+        type: reminderForm.type,
+        date: reminderForm.date,
+        advance_days: reminderForm.advance_days,
+        created_at: new Date().toISOString()
+      };
+
+      if (reminderForm.id) {
+        await updateDoc(doc(db, 'reminders', reminderForm.id), reminderData);
+        setSuccess('Recordatorio actualizado con éxito');
+      } else {
+        await addDoc(collection(db, 'reminders'), reminderData);
+        setSuccess('Recordatorio creado con éxito');
+      }
+      setIsAddingReminder(false);
+      setReminderForm({ account_name: '', type: 'payment_due', date: new Date().toISOString().split('T')[0], advance_days: 5 });
+      fetchReminders();
+    } catch (err) {
+      console.error("Error saving reminder:", err);
+      setError('Error al guardar el recordatorio');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleDeleteReminder = async () => {
+    if (!isDeletingReminder) return;
+    setIsProcessing(true);
+    try {
+      await deleteDoc(doc(db, 'reminders', isDeletingReminder));
+      setSuccess('Recordatorio eliminado con éxito');
+      fetchReminders();
+      setIsDeletingReminder(null);
+    } catch (err) {
+      console.error("Error deleting reminder:", err);
+      setError('Error al eliminar el recordatorio');
     } finally {
       setIsProcessing(false);
     }
@@ -2086,6 +2190,7 @@ service cloud.firestore {
     const fetchData = async () => {
     if (!user?.id) return;
     fetchGoals();
+    fetchReminders();
     const { start, end } = dateRange;
     
     // Helper to convert UTC event time to Local ISO string for comparison
@@ -2152,8 +2257,8 @@ service cloud.firestore {
 
       const knownCreditors = new Set<string>();
       allEvents.forEach(e => {
-        if (e.kind === 'debt_increase') {
-          let name = (!['Efectivo', 'Cash', 'cash', 'efectivo', 'Debit Card', 'Débito'].some(c => e.account_name?.toLowerCase().includes(c.toLowerCase()))) 
+        if (['debt_increase', 'debt_payment'].includes(e.kind)) {
+          let name = (e.account_name && !['Efectivo', 'Cash', 'cash', 'efectivo', 'Debit Card', 'Débito'].some(c => e.account_name?.toLowerCase().includes(c.toLowerCase()))) 
             ? e.account_name 
             : (e.merchant_name || e.description || 'Deuda');
           let nameStr = normalizeDebtName(String(name));
@@ -2271,7 +2376,7 @@ service cloud.firestore {
 
         // Debts Logic (Cumulative Historical for Charts)
         if (['debt_increase', 'debt_payment'].includes(kind)) {
-          let name = (kind === 'debt_increase' && !['Efectivo', 'Cash', 'cash', 'efectivo', 'Debit Card', 'Débito'].some(c => event.account_name?.toLowerCase().includes(c.toLowerCase()))) 
+          let name = (event.account_name && !['Efectivo', 'Cash', 'cash', 'efectivo', 'Debit Card', 'Débito'].some(c => event.account_name?.toLowerCase().includes(c.toLowerCase()))) 
             ? event.account_name 
             : (event.merchant_name || event.description || 'Deuda');
           
@@ -3019,7 +3124,7 @@ service cloud.firestore {
       return msg.length > 150 ? msg.substring(0, 147) + '.' : msg;
     }
 
-    if (proposal.operation === 'batch_create') {
+    if (proposal.operation === 'batch_create' || proposal.operation === 'create_goal' || proposal.operation === 'create_reminder' || proposal.operation === 'ignore_reminder') {
       const msg = cleanText(proposal.result.user_feedback_message || '');
       return msg.length > 150 ? msg.substring(0, 147) + '.' : msg;
     }
@@ -3047,11 +3152,6 @@ service cloud.firestore {
       if (description) msg += `, ${description}`;
       if (account) msg += `, en ${account}`;
       parts.push(msg + '.');
-    }
-
-    if (proposal.operation === 'create_goal' && proposal.result.create_goal?.goal) {
-      const goal = proposal.result.create_goal.goal;
-      parts.push(`Objetivo: ${goal.name}, meta ${formatMoney(goal.target_amount || 0)}.`);
     }
 
     // Pregunta de confirmación corta
@@ -3162,10 +3262,10 @@ service cloud.firestore {
 
       // Use configured accounts if available, otherwise fallback to recent events
       let existingAccounts: any[] = [];
-      if (user?.accounts && user.accounts.length > 0) {
-        existingAccounts = user.accounts.map((acc: any) => ({
+      if (displayAccounts && displayAccounts.length > 0) {
+        existingAccounts = displayAccounts.map((acc: any) => ({
           name: acc.name,
-          type: acc.type === 'credit' ? 'credit_card' : acc.type,
+          type: (acc.type === 'credit' || acc.type === 'credit_card' || acc.name.toLowerCase().includes('crédito') || acc.name.toLowerCase().includes('credit')) ? 'credit_card' : acc.type,
           cards: acc.cards || [],
           interest_rate: acc.interest_rate
         }));
@@ -3227,6 +3327,8 @@ service cloud.firestore {
           summary: e.description || e.merchant_name,
           account: e.account_name
         })),
+        reminders: reminders,
+        ignored_reminders: user.ignored_reminders || [],
         active_proposal: sanitizedProposal
       };
 
@@ -3594,9 +3696,88 @@ service cloud.firestore {
         
         await addDoc(collection(db, 'goals'), newGoal);
         await fetchData();
-        setProposal(null);
-        setSuccess("Objetivo creado con éxito.");
-        setTimeout(() => setSuccess(null), 4000);
+        
+        const remainingProposals = proposal.pending_proposals || [];
+        if (remainingProposals.length > 0) {
+          const nextProposal = remainingProposals[0];
+          nextProposal.pending_proposals = remainingProposals.slice(1);
+          setProposal(nextProposal);
+          setSuccess("Objetivo creado. Verificando el siguiente...");
+          speakText('Objetivo creado. Verificando el siguiente.');
+          setTimeout(() => setSuccess(null), 3000);
+        } else {
+          setProposal(null);
+          setSuccess("Objetivo creado con éxito.");
+          setTimeout(() => setSuccess(null), 4000);
+        }
+        setIsProcessing(false);
+        return;
+      } else if (proposal.operation === 'create_reminder' && proposal.result.create_reminder?.reminder) {
+        // Handle Create Reminder
+        const reminderData = proposal.result.create_reminder.reminder;
+        
+        // Validate that the date is not in the past
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const [year, month, day] = reminderData.date.split('-').map(Number);
+        const localSelectedDate = new Date(year, month - 1, day);
+
+        if (localSelectedDate < today) {
+          setError('No puedes registrar un recordatorio para una fecha anterior al día de hoy.');
+          setIsProcessing(false);
+          return;
+        }
+
+        const newReminder = {
+          user_id: user.id,
+          account_name: reminderData.account_name,
+          type: reminderData.type,
+          date: reminderData.date,
+          advance_days: reminderData.advance_days || 5,
+          created_at: new Date().toISOString()
+        };
+        
+        await addDoc(collection(db, 'reminders'), newReminder);
+        await fetchData();
+        
+        const remainingProposals = proposal.pending_proposals || [];
+        if (remainingProposals.length > 0) {
+          const nextProposal = remainingProposals[0];
+          nextProposal.pending_proposals = remainingProposals.slice(1);
+          setProposal(nextProposal);
+          setSuccess("Recordatorio creado. Verificando el siguiente...");
+          speakText('Recordatorio creado. Verificando el siguiente.');
+          setTimeout(() => setSuccess(null), 3000);
+        } else {
+          setProposal(null);
+          setSuccess("Recordatorio creado con éxito.");
+          setTimeout(() => setSuccess(null), 4000);
+        }
+        setIsProcessing(false);
+        return;
+      } else if (proposal.operation === 'ignore_reminder' && proposal.result.ignore_reminder?.account_name) {
+        // Handle Ignore Reminder
+        const accountName = proposal.result.ignore_reminder.account_name;
+        const currentIgnored = user.ignored_reminders || [];
+        if (!currentIgnored.includes(accountName)) {
+          const updatedIgnored = [...currentIgnored, accountName];
+          await updateDoc(doc(db, 'users', user.id), { ignored_reminders: updatedIgnored });
+          setUser({ ...user, ignored_reminders: updatedIgnored });
+        }
+        
+        const remainingProposals = proposal.pending_proposals || [];
+        if (remainingProposals.length > 0) {
+          const nextProposal = remainingProposals[0];
+          nextProposal.pending_proposals = remainingProposals.slice(1);
+          setProposal(nextProposal);
+          setSuccess("Preferencia guardada. Verificando el siguiente...");
+          speakText('Preferencia guardada. Verificando el siguiente.');
+          setTimeout(() => setSuccess(null), 3000);
+        } else {
+          setProposal(null);
+          setSuccess("Preferencia guardada.");
+          setTimeout(() => setSuccess(null), 4000);
+        }
         setIsProcessing(false);
         return;
       } else if (proposal.operation === 'batch_create' && proposal.result.batch_create?.events) {
@@ -4034,6 +4215,13 @@ service cloud.firestore {
       // If it's a debt payment or increase, and the user explicitly changed the account to a bank account,
       // we should assume they are trying to change the creditor (e.g. paying a BBVA credit card).
       // So we update the merchant_name to match the account_name.
+      
+      // Preserve time if it existed in the original event
+      if (editingEvent && editingEvent.occurred_at && editingEvent.occurred_at.length > 10) {
+        const timePart = editingEvent.occurred_at.substring(10);
+        cleanedData.occurred_at = cleanedData.occurred_at + timePart;
+      }
+
       if (['debt_payment', 'debt_increase'].includes(cleanedData.kind)) {
         if (editingEvent && editingEvent.account_name !== cleanedData.account_name && cleanedData.account_name) {
           // If they changed the account of a debt event, they are changing the creditor.
@@ -4041,7 +4229,7 @@ service cloud.firestore {
         }
         
         const isCashOrDebit = ['Efectivo', 'Cash', 'cash', 'efectivo', 'Debit Card', 'Débito'].some(c => cleanedData.account_name?.toLowerCase().includes(c.toLowerCase()));
-        const selectedAccount = user?.accounts?.find((a: any) => a.name === cleanedData.account_name);
+        const selectedAccount = displayAccounts.find((a: any) => a.name === cleanedData.account_name);
         const isDebitAccount = selectedAccount && ['debit', 'cash', 'savings'].includes(selectedAccount.type);
 
         if ((isCashOrDebit || isDebitAccount) && cleanedData.kind === 'debt_increase' && !editingEvent.group_id) {
@@ -4056,8 +4244,8 @@ service cloud.firestore {
         }
       } else if (cleanedData.kind === 'expense' && !editingEvent.group_id) {
         const isCreditCard = ['Crédito', 'Credit', 'Tarjeta', 'Card'].some(c => cleanedData.account_name?.toLowerCase().includes(c.toLowerCase()));
-        const selectedAccount = user?.accounts?.find((a: any) => a.name === cleanedData.account_name);
-        const isCreditAccount = selectedAccount && selectedAccount.type === 'credit';
+        const selectedAccount = displayAccounts.find((a: any) => a.name === cleanedData.account_name);
+        const isCreditAccount = selectedAccount && (selectedAccount.type === 'credit' || selectedAccount.type === 'credit_card');
 
         if (isCreditCard || isCreditAccount) {
           // If it's a single expense and the account is a credit card,
@@ -4601,7 +4789,6 @@ service cloud.firestore {
       };
 
       const renderCard = (event: any, isFirst: boolean, isSecond: boolean, linkedWithEvent?: any) => {
-        const marginClass = isFirst ? "mb-0" : "mb-2 last:mb-0";
         const radiusClass = isFirst ? "rounded-t-2xl" : isSecond ? "rounded-b-2xl" : "rounded-2xl";
         const borderClass = isFirst ? "border border-gray-200 dark:border-gray-800 border-b border-b-gray-300 dark:border-b-gray-600" : isSecond ? "border border-t-0 border-gray-200 dark:border-gray-800" : "border border-gray-200 dark:border-gray-800";
         const isHighlighted = isSummaryExpanded && highlightedEventId === event.id;
@@ -4640,7 +4827,6 @@ service cloud.firestore {
             id={isSummaryExpanded ? `summary-event-${event.id}` : undefined}
             className={cn(
               "p-4 flex items-center justify-between transition-all duration-500 relative",
-              marginClass,
               radiusClass,
               borderClass,
               bgClass
@@ -4755,6 +4941,7 @@ service cloud.firestore {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95 }}
               transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
+              className="mb-2 last:mb-0"
             >
               {renderCard(event, false, false)}
             </motion.div>
@@ -5003,6 +5190,10 @@ service cloud.firestore {
                 ? "border-emerald-100 dark:border-emerald-900"
                 : proposal?.operation === 'create_goal'
                 ? "border-emerald-100 dark:border-emerald-900"
+                : proposal?.operation === 'create_reminder'
+                ? "border-emerald-100 dark:border-emerald-900"
+                : proposal?.operation === 'ignore_reminder'
+                ? "border-gray-100 dark:border-gray-800"
                 : "border-gray-100 dark:border-gray-800"
             )}
           >
@@ -5022,6 +5213,10 @@ service cloud.firestore {
                 ? "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-100 dark:border-emerald-900"
                 : proposal?.operation === 'create_goal'
                 ? "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-100 dark:border-emerald-900"
+                : proposal?.operation === 'create_reminder'
+                ? "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-100 dark:border-emerald-900"
+                : proposal?.operation === 'ignore_reminder'
+                ? "bg-gray-50 dark:bg-gray-900 border-gray-100 dark:border-gray-800"
                 : "bg-gray-50 dark:bg-gray-900 border-gray-100 dark:border-gray-800"
             )}>
               <h3 className={cn(
@@ -5040,6 +5235,10 @@ service cloud.firestore {
                   ? "text-emerald-800 dark:text-emerald-400"
                   : proposal?.operation === 'create_goal'
                   ? "text-emerald-800 dark:text-emerald-400"
+                  : proposal?.operation === 'create_reminder'
+                  ? "text-emerald-800 dark:text-emerald-400"
+                  : proposal?.operation === 'ignore_reminder'
+                  ? "text-gray-800 dark:text-gray-400"
                   : "text-gray-800 dark:text-gray-200"
               )}>
                 {['debt_increase', 'debt_payment'].includes(proposal?.result?.create?.event?.kind || '') ? <Wallet size={18} /> : 
@@ -5049,8 +5248,10 @@ service cloud.firestore {
                  proposal?.operation === 'query' ? <Search size={18} /> :
                  proposal?.operation === 'batch_create' ? <Check size={18} /> :
                  proposal?.operation === 'create_goal' ? <Target size={18} /> :
+                 proposal?.operation === 'create_reminder' ? <Bell size={18} /> :
+                 proposal?.operation === 'ignore_reminder' ? <BellOff size={18} /> :
                  <Check size={18} />} 
-                {proposal?.operation === 'query' ? 'Consulta' : proposal?.operation === 'batch_create' ? 'Resumen de Estado de Cuenta' : proposal?.operation === 'create_goal' ? 'Nuevo Objetivo' : 'Propuesta de Movimiento'} {remainingPendingCount > 0 ? `(Pendientes: ${remainingPendingCount + 1})` : ''}
+                {proposal?.operation === 'query' ? 'Consulta' : proposal?.operation === 'batch_create' ? 'Resumen de Estado de Cuenta' : proposal?.operation === 'create_goal' ? 'Nuevo Objetivo' : proposal?.operation === 'create_reminder' ? 'Nuevo Recordatorio' : proposal?.operation === 'ignore_reminder' ? 'Ignorar Recordatorio' : 'Propuesta de Movimiento'} {remainingPendingCount > 0 ? `(Pendientes: ${remainingPendingCount + 1})` : ''}
               </h3>
               <button onClick={() => { setProposal(null); speakText('Entendido, propuesta descartada.'); }} className={cn(
                 "p-1 rounded-full transition-colors",
@@ -5068,6 +5269,10 @@ service cloud.firestore {
                   ? "text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-800"
                   : proposal?.operation === 'create_goal'
                   ? "text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-800"
+                  : proposal?.operation === 'create_reminder'
+                  ? "text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-800"
+                  : proposal?.operation === 'ignore_reminder'
+                  ? "text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800"
                   : "text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800"
               )}>
                 <X size={20} />
@@ -5191,6 +5396,46 @@ service cloud.firestore {
                 </div>
               )}
 
+              {proposal?.result?.create_reminder?.reminder && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 block">Tarjeta de Crédito</label>
+                    <p className="text-base font-bold dark:text-white leading-tight flex items-center gap-2">
+                      <CreditCard size={14} className="text-emerald-500" />
+                      {proposal.result.create_reminder.reminder.account_name}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 block">Tipo de Fecha</label>
+                    <p className="text-base font-bold dark:text-white leading-tight">
+                      {proposal.result.create_reminder.reminder.type === 'payment_due' ? 'Fecha límite de pago' : 'Fecha de corte'}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 block">Fecha</label>
+                    <p className="text-base font-bold dark:text-white leading-tight flex items-center gap-1">
+                      <Calendar size={14} /> 
+                      {proposal.result.create_reminder.reminder.date}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1 block">Anticipación</label>
+                    <p className="text-base font-bold dark:text-white leading-tight flex items-center gap-1">
+                      <Bell size={14} />
+                      {proposal.result.create_reminder.reminder.advance_days || 5} días antes
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {proposal?.result?.ignore_reminder?.account_name && (
+                <div className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-100 dark:border-gray-700">
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    No volveré a preguntarte por recordatorios para la tarjeta <strong>{proposal.result.ignore_reminder.account_name}</strong>.
+                  </p>
+                </div>
+              )}
+
               {/* Technical query info removed per user request */}
 
               {proposal?.follow_up_questions && proposal?.follow_up_questions?.length > 0 && (
@@ -5223,6 +5468,10 @@ service cloud.firestore {
                         ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md'
                         : proposal?.operation === 'create_goal'
                         ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md'
+                        : proposal?.operation === 'create_reminder'
+                        ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md'
+                        : proposal?.operation === 'ignore_reminder'
+                        ? 'bg-gray-600 text-white hover:bg-gray-700 shadow-md'
                         : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md')
                     : 'bg-gray-200 dark:bg-gray-700 text-gray-400 cursor-not-allowed'
                   )}
@@ -6423,6 +6672,52 @@ service cloud.firestore {
 
     return (
     <div className="max-w-2xl mx-auto space-y-4 sm:space-y-6 pb-20">
+      <AnimatePresence>
+        {isDeletingReminder && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-red-100 dark:border-red-900/30"
+            >
+              <div className="p-5 sm:p-6 md:p-8 text-center">
+                <div className="w-20 h-20 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center text-red-600 dark:text-red-400 mx-auto mb-6">
+                  <AlertCircle size={40} />
+                </div>
+                <h3 className="text-xl sm:text-2xl font-black dark:text-white mb-4 tracking-tight">¿Eliminar recordatorio?</h3>
+                <div className="bg-red-50 dark:bg-red-900/10 p-4 rounded-2xl mb-8">
+                  <p className="text-red-800 dark:text-red-300 text-sm font-medium leading-relaxed">
+                    Esta acción es permanente y no se puede deshacer. Dejarás de recibir notificaciones para este pago.
+                  </p>
+                </div>
+                
+                <div className="flex flex-col gap-3">
+                  <button 
+                    onClick={handleDeleteReminder}
+                    disabled={isProcessing}
+                    className="w-full py-4 rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-2 shadow-xl bg-red-600 text-white hover:bg-red-700 shadow-red-600/20"
+                  >
+                    {isProcessing ? (
+                      <><Loader2 className="animate-spin" size={20} /> Eliminando...</>
+                    ) : (
+                      <><Trash2 size={20} /> Sí, eliminar recordatorio</>
+                    )}
+                  </button>
+                  <button 
+                    onClick={() => setIsDeletingReminder(null)}
+                    disabled={isProcessing}
+                    className="w-full py-4 text-gray-500 dark:text-gray-400 font-semibold hover:bg-gray-50 dark:hover:bg-gray-700 rounded-2xl transition-all"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-gray-800 p-4 sm:p-6 md:p-8 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none">
         <div className="flex items-center justify-between mb-8">
           <h3 className="text-xl font-bold dark:text-white">Perfil de Usuario</h3>
@@ -6918,6 +7213,140 @@ service cloud.firestore {
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+      </motion.div>
+
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }} 
+        animate={{ opacity: 1, y: 0 }} 
+        transition={{ delay: 0.07 }} 
+        className="bg-white dark:bg-gray-800 p-4 sm:p-6 md:p-8 rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.08)] border border-gray-200/60 dark:border-gray-700 dark:shadow-none mb-6"
+      >
+        <div className="flex items-center justify-between mb-8">
+          <h3 className="text-xl font-bold dark:text-white">Recordatorios de Tarjetas</h3>
+          {!isAddingReminder && (
+            <button 
+              onClick={() => {
+                setReminderForm({ account_name: '', type: 'payment_due', date: new Date().toISOString().split('T')[0], advance_days: 5 });
+                setIsAddingReminder(true);
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl font-bold hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-all text-sm"
+            >
+              <Plus size={16} />
+              Agregar Recordatorio
+            </button>
+          )}
+        </div>
+
+        {isAddingReminder ? (
+          <form onSubmit={handleSaveReminder} className="space-y-4 bg-gray-50 dark:bg-gray-900 p-6 rounded-2xl border border-gray-100 dark:border-gray-800">
+            <div className="flex justify-between items-center mb-4">
+              <h4 className="font-semibold dark:text-white">{reminderForm.id ? 'Editar Recordatorio' : 'Nuevo Recordatorio'}</h4>
+              <button type="button" onClick={() => setIsAddingReminder(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tarjeta de Crédito</label>
+                <select 
+                  value={reminderForm.account_name} 
+                  onChange={e => setReminderForm({...reminderForm, account_name: e.target.value})}
+                  className="w-full p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent dark:text-white"
+                  required
+                >
+                  <option value="">Selecciona una tarjeta</option>
+                  {displayAccounts.filter((a: any) => a.type === 'credit' || a.type === 'credit_card' || a.name.toLowerCase().includes('crédito') || a.name.toLowerCase().includes('credit')).map((acc: any) => (
+                    <option key={acc.id || acc.name} value={acc.name}>{acc.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tipo de Fecha</label>
+                <select 
+                  value={reminderForm.type} 
+                  onChange={e => setReminderForm({...reminderForm, type: e.target.value as any})}
+                  className="w-full p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent dark:text-white"
+                  required
+                >
+                  <option value="payment_due">Fecha límite de pago</option>
+                  <option value="cutoff">Fecha de corte</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Fecha</label>
+                <input 
+                  type="date" 
+                  value={reminderForm.date || ''} 
+                  onChange={e => {
+                    setReminderForm({...reminderForm, date: e.target.value});
+                  }}
+                  className="w-full p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent dark:text-white"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Avisar con anticipación (días)</label>
+                <input 
+                  type="number" 
+                  min="1" 
+                  max="30" 
+                  value={reminderForm.advance_days || ''} 
+                  onChange={e => setReminderForm({...reminderForm, advance_days: parseInt(e.target.value)})}
+                  className="w-full p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent dark:text-white"
+                  required
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-4">
+              <button type="button" onClick={() => setIsAddingReminder(false)} className="px-4 py-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors font-medium">Cancelar</button>
+              <button type="submit" disabled={isProcessing} className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold transition-colors disabled:opacity-50 flex items-center gap-2">
+                {isProcessing ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
+                Guardar
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {reminders.map(reminder => (
+              <div key={reminder.id} className="p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 flex justify-between items-start group">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <CreditCard size={18} className="text-emerald-500" />
+                    <h4 className="font-bold text-gray-900 dark:text-white">{reminder.account_name}</h4>
+                  </div>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    {reminder.type === 'payment_due' ? 'Fecha límite de pago' : 'Fecha de corte'}: {reminder.date}
+                  </p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                    Avisar {reminder.advance_days} días antes
+                  </p>
+                </div>
+                <div className="flex gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                  <button 
+                    onClick={() => {
+                      setReminderForm(reminder);
+                      setIsAddingReminder(true);
+                    }}
+                    className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors"
+                  >
+                    <Edit2 size={16} />
+                  </button>
+                  <button 
+                    onClick={() => setIsDeletingReminder(reminder.id!)}
+                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+            ))}
+            {reminders.length === 0 && (
+              <div className="col-span-full text-center py-8 text-gray-500 dark:text-gray-400">
+                No tienes recordatorios configurados.
               </div>
             )}
           </div>

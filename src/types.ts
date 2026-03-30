@@ -25,9 +25,19 @@ export interface Event {
   needs_confirmation?: boolean;
 }
 
+export interface Reminder {
+  id: string;
+  user_id: string;
+  account_name: string;
+  type: 'payment_due' | 'cutoff';
+  day_of_month: number;
+  advance_days: number;
+  created_at: string;
+}
+
 export interface GeminiResponse {
   status: 'ready_to_confirm' | 'needs_clarification';
-  operation: 'create' | 'update' | 'query' | 'create_goal' | 'batch_create';
+  operation: 'create' | 'update' | 'query' | 'create_goal' | 'batch_create' | 'create_reminder';
   follow_up_questions: string[];
   input_modalities_detected: string[];
   result: {
@@ -54,6 +64,14 @@ export interface GeminiResponse {
         deadline?: string;
         emoji?: string;
         color?: string;
+      }
+    };
+    create_reminder?: {
+      reminder: {
+        account_name: string;
+        type: 'payment_due' | 'cutoff';
+        day_of_month: number;
+        advance_days: number;
       }
     };
     user_feedback_message: string;

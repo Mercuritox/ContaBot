@@ -9,6 +9,10 @@
         "email": { "type": "string", "format": "email" },
         "phone": { "type": "string" },
         "avatar": { "type": "string" },
+        "ignored_reminders": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "settings": {
           "type": "object",
           "properties": {
@@ -66,6 +70,20 @@
         "premiumUntil": { "type": "string" },
         "updatedAt": { "type": "string" }
       }
+    },
+    "Reminder": {
+      "title": "Reminder",
+      "description": "Credit card payment reminder",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "account_name": { "type": "string" },
+        "type": { "type": "string", "enum": ["payment_due", "cutoff"] },
+        "date": { "type": "string", "format": "date" },
+        "advance_days": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id", "account_name", "type", "date"]
     }
   },
   "firestore": {
@@ -84,6 +102,10 @@
     "/subscriptions/{userId}": {
       "schema": "Subscription",
       "description": "Subscription status per user"
+    },
+    "/reminders/{reminderId}": {
+      "schema": "Reminder",
+      "description": "Credit card payment reminders"
     }
   }
 }

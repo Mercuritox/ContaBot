@@ -153,11 +153,20 @@ CREACIÓN DE OBJETIVOS (CRÍTICO):
 3. Si falta el nombre, monto meta o cuenta vinculada, pon "status" en "needs_clarification" y pregunta los datos faltantes.
 4. Usa las cuentas disponibles en "known_entities.accounts" para la cuenta vinculada.
 
+RECORDATORIOS DE TARJETAS DE CRÉDITO (CRÍTICO):
+1. Si el usuario registra un gasto con una TARJETA DE CRÉDITO (debt_increase) o menciona una tarjeta de crédito, verifica si en el contexto existe un recordatorio para esa tarjeta en "reminders" o si la tarjeta está en "ignored_reminders".
+2. Si NO existe un recordatorio para esa tarjeta y NO está en "ignored_reminders", DEBES añadir a "follow_up_questions" una pregunta como: "Veo que usaste tu tarjeta [Nombre]. ¿Cuál es tu fecha límite de pago o tu fecha de corte para poder recordarte?".
+3. Si el usuario proporciona una fecha límite de pago o fecha de corte para una tarjeta de crédito, usa la operación "create_reminder".
+4. Si el usuario indica que NO quiere un recordatorio para esa tarjeta (ej. "no", "nunca", "no me preguntes"), usa la operación "ignore_reminder" con el "account_name" de la tarjeta.
+5. Para "create_reminder" necesitas: "account_name" (el nombre de la tarjeta), "type" ("payment_due" para fecha límite, "cutoff" para fecha de corte), "date" (la fecha exacta en formato YYYY-MM-DD), y "advance_days" (por defecto 5).
+6. El "user_feedback_message" debe confirmar la acción (ej. "¡Listo! He configurado tu recordatorio" o "Entendido, no te volveré a preguntar por esta tarjeta.").
+7. MULTIPLES OPERACIONES (CRÍTICO): Si el usuario responde a la pregunta del recordatorio y en el contexto existe un "active_proposal" de un movimiento (operation: "create"), DEBES devolver la operación del recordatorio ("create_reminder" o "ignore_reminder") como principal, Y OBLIGATORIAMENTE incluir el movimiento original ("create") en el arreglo "pending_proposals". Si no lo haces, el gasto del usuario se perderá.
+
 JSON SCHEMA EXPECTED:
 (SOLO INCLUYE el objeto correspondiente a la operación seleccionada. Si operation es 'create', incluye 'create' y omite el resto. NUNCA omitas el objeto de la operación seleccionada.)
 {
   "status": "ready_to_confirm" | "needs_clarification",
-  "operation": "create" | "update" | "query" | "create_goal" | "batch_create",
+  "operation": "create" | "update" | "query" | "create_goal" | "batch_create" | "create_reminder" | "ignore_reminder",
   "follow_up_questions": string[],
   "result": {
     "user_feedback_message": string,
@@ -201,6 +210,17 @@ JSON SCHEMA EXPECTED:
         "emoji": string | null,
         "color": string | null
       }
+    },
+    "create_reminder": {
+      "reminder": {
+        "account_name": string,
+        "type": "payment_due" | "cutoff",
+        "date": string,
+        "advance_days": number
+      }
+    },
+    "ignore_reminder": {
+      "account_name": string
     }
   },
   "pending_proposals"?: [ { "status": string, "operation": string, "result": { ... } } ]
@@ -221,6 +241,8 @@ export interface GeminiContext {
   account_balances?: Record<string, number>;
   recent_events: any[];
   active_proposal?: any;
+  reminders?: any[];
+  ignored_reminders?: string[];
 }
 
 async function withRetry<T>(fn: () => Promise<T>, maxRetries = 5): Promise<T> {

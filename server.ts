@@ -203,7 +203,7 @@ async function calculateDailyInterest() {
               await adminDb.doc(docPath).set({
                 ...eventData,
                 user_id: userId,
-                updated_at: adminDb.FieldValue ? adminDb.FieldValue.serverTimestamp() : new Date().toISOString()
+                updated_at: admin.firestore.FieldValue.serverTimestamp()
               });
               console.log(`✅ Interés sincronizado a Firestore para ${userId}: ${account.name}`);
             } catch (error) {
@@ -221,6 +221,38 @@ async function calculateDailyInterest() {
     }
   }
   console.log("Cálculo de intereses diarios finalizado.");
+}
+
+async function cleanupExpiredReminders() {
+  console.log("Limpiando recordatorios expirados...");
+  const today = new Date().toISOString().split('T')[0];
+  
+  try {
+    const { getFirestore } = await import('firebase-admin/firestore');
+    const adminDb = getFirestore();
+    
+    // Buscar recordatorios cuya fecha sea menor a hoy
+    const remindersSnap = await adminDb.collection('reminders')
+      .where('date', '<', today)
+      .get();
+      
+    if (remindersSnap.empty) {
+      console.log("No hay recordatorios expirados para limpiar.");
+      return;
+    }
+    
+    console.log(`Encontrados ${remindersSnap.size} recordatorios expirados. Eliminando...`);
+    
+    const batch = adminDb.batch();
+    remindersSnap.docs.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+    
+    await batch.commit();
+    console.log(`✅ Se eliminaron ${remindersSnap.size} recordatorios expirados.`);
+  } catch (err) {
+    console.error("❌ Error limpiando recordatorios expirados:", err);
+  }
 }
 
 // ============================================================
@@ -290,7 +322,8 @@ async function loadSecretsFromGCP() {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = new Database("finance.db");
+const dbPath = process.env.NODE_ENV === 'production' ? '/tmp/finance.db' : 'finance.db';
+const db = new Database(dbPath);
 
 let stripe: Stripe;
 
@@ -2187,6 +2220,41 @@ async function startServer() {
             }
           }
 
+          // Verificar recordatorios de tarjetas de crédito
+          const remindersQuery = await firestore
+            .collection('reminders')
+            .where('user_id', '==', firebase_uid)
+            .get();
+
+          for (const reminderDoc of remindersQuery.docs) {
+            const reminder = reminderDoc.data();
+            const todayDate = new Date();
+            const currentDay = todayDate.getDate();
+            const currentMonth = todayDate.getMonth();
+            const currentYear = todayDate.getFullYear();
+            
+            let targetDate = new Date(currentYear, currentMonth, reminder.day_of_month);
+            
+            if (currentDay > reminder.day_of_month) {
+              targetDate = new Date(currentYear, currentMonth + 1, reminder.day_of_month);
+            }
+            
+            const diffTime = targetDate.getTime() - todayDate.getTime();
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            if (diffDays >= 0 && diffDays <= (reminder.advance_days || 5)) {
+              const typeText = reminder.type === 'payment_due' ? 'fecha límite de pago' : 'fecha de corte';
+              const daysText = diffDays === 0 ? 'hoy' : diffDays === 1 ? 'mañana' : `en ${diffDays} días`;
+              
+              await sendPushToUser(
+                firebase_uid,
+                `💳 Recordatorio: ${reminder.account_name}`,
+                `Tu ${typeText} es ${daysText} (día ${reminder.day_of_month}).`,
+                { action: 'open_settings' }
+              );
+            }
+          }
+
         } catch (e) {
           console.error('Error procesando usuario', firebase_uid, e);
           results.errors++;
@@ -2352,8 +2420,12 @@ async function startServer() {
     // Calculate interest after server starts listening
     setTimeout(() => {
       calculateDailyInterest();
+      cleanupExpiredReminders();
       // Schedule to run every 24 hours (at midnight)
-      cron.schedule("0 0 * * *", calculateDailyInterest);
+      cron.schedule("0 0 * * *", () => {
+        calculateDailyInterest();
+        cleanupExpiredReminders();
+      });
     }, 1000);
   });
 }

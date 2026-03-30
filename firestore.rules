@@ -17,6 +17,9 @@ service cloud.firestore {
     // Collection: subscriptions
     // Fields: isPremium, stripeCustomerId, subscriptionId, premiumUntil, updatedAt
     //
+    // Collection: reminders
+    // Fields: user_id, account_name, type, day_of_month, advance_days, created_at
+    //
     // ===============================================================
 
     // Helper Functions
@@ -59,6 +62,14 @@ service cloud.firestore {
              data.target_amount is number;
     }
 
+    function isValidReminder(data) {
+      return data.keys().hasAll(['user_id', 'account_name', 'type', 'date']) &&
+             data.user_id == request.auth.uid &&
+             data.account_name is string && data.account_name.size() > 0 &&
+             data.type in ['payment_due', 'cutoff'] &&
+             data.date is string && data.date.size() >= 10;
+    }
+
     // Rules
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
@@ -82,6 +93,13 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (resource == null || resource.data.user_id == request.auth.uid || isAdmin());
       allow create: if isAuthenticated() && isValidGoal(request.resource.data);
       allow update: if isAuthenticated() && (resource == null || resource.data.user_id == request.auth.uid) && isValidGoal(request.resource.data);
+      allow delete: if isAuthenticated() && (resource == null || resource.data.user_id == request.auth.uid || isAdmin());
+    }
+
+    match /reminders/{reminderId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.user_id == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidReminder(request.resource.data);
+      allow update: if isAuthenticated() && (resource == null || resource.data.user_id == request.auth.uid) && isValidReminder(request.resource.data);
       allow delete: if isAuthenticated() && (resource == null || resource.data.user_id == request.auth.uid || isAdmin());
     }
 
