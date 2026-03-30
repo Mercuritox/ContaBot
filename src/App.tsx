@@ -1688,7 +1688,7 @@ service cloud.firestore {
       const genAI = new GoogleGenAI({ apiKey: apiKey });
       
       const response = await genAI.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.1-flash-lite-preview",
         contents: `Analiza mis finanzas de este mes: ${safeJsonStringify(summaryData)}`,
         config: {
           systemInstruction: systemPrompt
@@ -1757,7 +1757,7 @@ service cloud.firestore {
       const chatHistory = aiChatMessages.map(m => `${m.role === 'ai' ? 'ContaBot' : 'Usuario'}: ${m.text}`).join('\n\n');
       
       const response = await genAI.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.1-flash-lite-preview",
         contents: `Historial del chat:\n${chatHistory}\n\nUsuario: ${userMessage}`,
         config: {
           systemInstruction: systemPrompt

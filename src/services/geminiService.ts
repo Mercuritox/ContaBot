@@ -405,7 +405,7 @@ Input: Process this input according to the system instructions.
   const ai = new GoogleGenAI({ apiKey });
 
   const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     contents: { parts },
     config: {
       systemInstruction: SYSTEM_INSTRUCTION,
